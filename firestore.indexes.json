@@ -1,0 +1,34 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "seasonId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "seasons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dateFrom", "order": "ASCENDING" },
+        { "fieldPath": "dateTo", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "stats",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [{ "fieldPath": "seasonId", "order": "ASCENDING" }]
+    }
+  ],
+  "fieldOverrides": []
+}

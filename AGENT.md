@@ -124,7 +124,7 @@ src/
 │                  usePlayerSeasonStats, useRankings
 ├── data/          *.repository.ts — ÚNICO lugar que importa de firebase/*
 ├── domain/        types.ts, rules.ts, yaku.ts, handValue.ts, turn.ts, uma.ts,
-│                  game.ts, seasons.ts, ranking.ts, stats.ts
+│                  game.ts, replay.ts, seasons.ts, ranking.ts, stats.ts
 ├── i18n/          locales/es.ts
 ├── pages/         DashboardPage, PlayersPage, GamesPage, GameDetailPage, SeasonsPage,
 │                  StatsPage, RankingsPage, LoginPage
@@ -178,6 +178,7 @@ Reparto de los módulos de dominio:
 | `domain/turn.ts`  | Resolución de un turno: deltas, invariante de cuadre, bote de riichi, chombo, bancarrota |
 | `domain/uma.ts`   | Uma y punto de retorno                                                       |
 | `domain/game.ts`  | Ciclo de vida y resultado final: estados, transiciones, posiciones, desempate |
+| `domain/replay.ts` | Recorrido de una partida: estado derivado de cada turno y re-derivación al corregir o borrar |
 | `domain/seasons.ts` | Rangos de fechas, solapamientos y asignación de una partida a su temporada |
 | `domain/ranking.ts` | Clasificación de temporada y sus desempates                                |
 | `domain/stats.ts` | Agregación por jugador y temporada                                            |
@@ -197,7 +198,8 @@ Prohibido:
 
 Pinia queda **reducido a dos stores**, y solo para estado que deba sobrevivir a la navegación:
 
-- `stores/session.ts` — usuario autenticado y estado de la sesión.
+- `stores/session.ts` — usuario autenticado y estado de la sesión, incluido el acceso con correo y
+  contraseña (RF-15.9). No hay un tercer store para el acceso.
 - `stores/preferences.ts` — tema, densidad de tabla, última temporada vista, cacheados en
   `localStorage`.
 
@@ -210,7 +212,14 @@ Reglas de los stores:
 - **Nunca consumir `useQuery()` dentro de un store.** La query quedaría *inmortal*: un store nunca
   se destruye, así que su entrada de caché nunca se recolectaría. Si un store necesita leer datos
   cacheados, usa `useQueryCache().getQueryData(key)`.
-- Un store no hace E/S. Delega en `queries/` o en `data/`.
+- Un store no hace E/S. Delega en `queries/` o en `data/`. **Única excepción:** la autenticación,
+  que no va por `data/` ni por `queries/` sino por `src/app/firebase.ts`, porque es el único módulo
+  además de `src/data/` que puede importar `firebase/*` (V.1). Así `stores/session.ts` delega
+  `watchAuthState`, `signInWithEmail` y `signOutSession`, y ninguna otra capa habla con el SDK de
+  Auth.
+- El store **no fija el estado de sesión por su cuenta**: `signIn` espera al SDK y deja que
+  `onAuthStateChanged` marque `authenticated`. Si el store escribiera `status` a mano habría dos
+  fuentes de verdad y RF-15.4 dejaría de cumplirse.
 - La prueba: si el estado pertenece a una sola pantalla y muere con ella, no es un store.
 
 ### Contrato de queries y composables
@@ -294,6 +303,26 @@ Consecuencias que el código tiene que respetar:
 - La caché local **no** exime de la comprobación de sesión: escribir sin sesión iniciada sigue
   siendo imposible aunque haya cobertura.
 
+### Acceso con Firebase Authentication
+
+`src/app/firebase.ts` es también la única costura de autenticación, y expone cuatro cosas: la
+instancia de Firestore (`getDb()`), la suscripción al estado (`watchAuthState`), el acceso
+(`signInWithEmail`) y el cierre (`signOutSession`). Ninguna otra capa importa `firebase/auth`.
+
+Consecuencias que el código tiene que respetar:
+
+- El acceso es **correo y contraseña** (RF-15.9). La aplicación **no registra cuentas ni gestiona
+  credenciales**: el alta se concede fuera del sistema, así que no hay pantalla de alta, ni de
+  recuperación, ni de verificación de correo.
+- **El fallo de acceso se traduce antes de salir de `app/firebase.ts`.** `signInWithEmail` lanza
+  `AuthError` con una causa de `AuthErrorCode` y su `message` es la clave i18n `errors.auth.*`. El
+  texto del SDK nunca llega a la interfaz: contiene `user-not-found` o `wrong-password`, que juntos
+  convertirían la pantalla en un enumerador de cuentas del club (RF-14.3, RNF-7).
+- `AuthErrorCode` y las claves `errors.auth.*` van en el mismo orden. Si se añade una causa, se
+  añaden las dos.
+- Un rechazo devuelve un único mensaje para cualquier credencial incorrecta, también cuando el
+  correo no está dado de alta. El club tiene que comunicar el alta de cuentas por fuera.
+
 ---
 
 ## Data model
@@ -302,8 +331,8 @@ Consecuencias que el código tiene que respetar:
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `players/{playerId}`                            | `externalId`, `name`, `active`, `createdAt`, `updatedAt`                                       |
 | `seasons/{seasonId}`                            | `title`, `dateFrom`, `dateTo`, `status`, `createdAt`, `updatedAt`                              |
-| `games/{gameId}`                                | `seasonId`, `date`, `gameLength`, `ruleset`, `rulesetVersion`, `startPoints`, `status`, `mustFinalize`, `results[]`, `finalizationAudit[]`, `createdAt`, `updatedAt` |
-| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `value[]`, `deltas[]`, `capturedBy`, `isRenchan`, `isFinalTurn`, `createdAt` |
+| `games/{gameId}`                                | `seasonId`, `date`, `gameLength`, `ruleset`, `rulesetVersion`, `startPoints`, `status`, `mustFinalize`, `results[]`, `finalizationAudit[]`, `turnAudit[]`, `createdAt`, `updatedAt` |
+| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `yakuHanOverride`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `value[]`, `deltas[]`, `capturedBy`, `updatedBy`, `updatedAt`, `isRenchan`, `isFinalTurn`, `audit[]`, `createdAt` |
 | `playerSeasonStats/{playerId}/stats/{seasonId}` | ID = temporada. `playerId`, `seasonId`, `actualPoints`, `gamesPlayed`, `victories`, `positions`, `yakuStats` |
 | `rankings/{seasonId}/players/{playerId}`        | ID compuesto. `playerId`, `seasonId`, `points`, `gamesPlayed`, `rank`, `updatedAt`           |
 
@@ -321,6 +350,24 @@ Detalle de los campos estructurados:
   admite la acción de finalizar y registrar auditoría.
 - `finalizationAudit[]`: `{ at, by, action: 'finalize' | 'unfinalize', reason? }`. Es lo que permite
   deshacer la finalización sin reescribir el pasado en silencio.
+- `turnAudit[]`: `{ at, by, action: 'delete', turnNo, before }`. Solo recibe los **borrados de turno sin
+  turno anterior**: es el único sitio donde el registro sobrevive sin que el propio borrado se lo lleve
+  por delante. No es un historial de revisiones de la partida —ese es `finalizationAudit[]`— sino el
+  destino de una entrada que no tiene otro hogar.
+- `audit[]` en un turno: `{ at, by, action: 'correct', changes: [{ field, from, to, derived }] }`. Cada
+  turno afectado por una corrección recibe la suya, incluido el que la ha recibido por re-derivación.
+  `derived` distingue lo que recalculó el sistema de lo que cambió una persona. **No lleva campo de
+  motivo**: en una corrección de captura el diff ya dice qué pasó. Es de solo anexado, y esa inalterabilidad
+  **la garantiza el cliente, no `firestore.rules`**: las reglas conceden escritura autenticada sobre el
+  documento completo y no pueden impedir que un array se sobrescriba entero (RF-19.13 de `specs/002`).
+- `capturedBy` en un turno es **inmutable**: identifica a quien escribió la versión original. Quién
+  corrigió por última vez va en `updatedBy`, y el detalle en `audit[]`.
+- `yakuHan` en un turno es **salida**, no entrada: lo calcula el catálogo de yaku. `yakuHanOverride` es el
+  ajuste a mano, guardado como **delta** sobre esa suma, para que el total siga siendo derivable y se
+  distinga lo que aportó el catálogo de lo que aportó la persona.
+- `wind`, `honba` y `dealerId` de un turno son **estado derivado** de los turnos anteriores, no captura.
+  Los escribe el recorrido de `domain/replay.ts`. `dealerId` es el campo que **manda en los pagos**: es el
+  dealer de ese turno y no el del asiento Este.
 - `seasonId: string | null`. Nullable a propósito: la temporada se **deduce de `date`**, y una partida
   cuya fecha no cae en ningún rango se queda sin temporada en lugar de ser inválida. Dos temporadas no
   pueden solaparse, así que la asignación por fecha nunca es ambigua.
@@ -338,8 +385,10 @@ Detalle de los campos estructurados:
 - La suma de los `deltas` de un turno **no es cero por construcción**:
   `Σ deltas = −(1000 × riichi declarados) − (8000 × chombos)`. Ni el bote de riichi ni el chombo van a
   ningún jugador. Validar con `=== 0` rechaza turnos correctos.
-- `turns/{turnNo}`: ID como string con relleno a dos dígitos, para que el orden lexicográfico sea el
-  cronológico. La numeración es correlativa y sin huecos.
+- `turns/{turnNo}`: ID como el número del turno en decimal, **sin relleno con ceros** —el turno 1 se llama
+  `1`—. El relleno a dos dígitos rompía el orden lexicográfico a partir del turno 100, y ese techo llevaba
+  dos revisiones abierto. **El orden lo fija el campo numérico `turnNo`, nunca el identificador del
+  documento**: `list()` ordena por `turnNo` y eso basta. La numeración es correlativa y sin huecos.
 - `positions`: `'1st' | '2nd' | '3rd' | '4th'`, y en `playerSeasonStats` el desglose
   `Record<Position, number>`. `yakuStats`: `riichi`, `dora`, `kan`, `tsumo`, `ron`, `chombo`,
   `haiteiRaoyue`, `rinshanKaihou`, `yakuman`. `yakuman` cuenta **manos** con yaku de límite o 13+ han,

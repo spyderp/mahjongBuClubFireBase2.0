@@ -35,6 +35,7 @@ function table(
 function base(overrides?: Partial<TurnBase>): TurnBase {
   return {
     players: overrides?.players ?? table(),
+    dealerId: overrides?.dealerId ?? A,
     honba: overrides?.honba ?? 0,
     riichiDeclaredBy: overrides?.riichiDeclaredBy ?? [],
     riichiSticksBefore: overrides?.riichiSticksBefore ?? 0,
@@ -83,6 +84,13 @@ function resolve(input: TurnInput): TurnResolution {
 
 function move(playerId: PlayerId, delta: number): PlayerDelta {
   return { playerId, delta }
+}
+
+/** Orden de asiento para comparar deltas en el mismo orden en que los emite el motor. */
+const SEATS: readonly PlayerId[] = [A, B, C, D]
+
+function seatOrder(playerId: PlayerId): number {
+  return SEATS.indexOf(playerId)
 }
 
 describe('T24 · resolución de un tsumo', () => {
@@ -554,7 +562,7 @@ describe('T34 · invariante de cuadre', () => {
           const square = checkSquare({
             deltas: resolution.deltas,
             riichiDeclared: riichi.length,
-            riichiClaimed: scenario.isWin ? potBefore + riichi.length : 0,
+            riichiSticksClaimedThisTurn: scenario.isWin ? potBefore + riichi.length : 0,
             chombos: scenario.chombos,
           })
 
@@ -574,12 +582,69 @@ describe('T34 · invariante de cuadre', () => {
     expect(failures).toStrictEqual([])
   })
 
+  it('el ganador que declara riichi en su propia mano cuadra a cero (T104, RF-4.1)', () => {
+    // Riichi + ippatsu + tsumo cerrado = 3 han de yaku, más 2 dora: 5 han y 22 fu.
+    const mano: HandValueInput = {
+      yaku: ['riichi', 'ippatsu', 'menzenTsumo'],
+      yakuHan: 3,
+      doraCount: 2,
+      fu: 22,
+    }
+    const resolution = resolve(
+      tsumoInput([win(A, mano)], { riichiDeclaredBy: [A], riichiSticksBefore: 0 }),
+    )
+
+    // Riichi + ippatsu + tsumo cerrado = 3 han de yaku, más 2 dora: 5 han en total, que es
+    // manga (`HAN_MANGAN = 5`), así que los 22 fu no entran en la fórmula. Puntos básicos 2000 y
+    // el dealer cobra el doble redondeado a la centena: 4000 de cada uno, 12 000. East declara el
+    // riichi, de modo que su −1000 y el +1000 que vuelve con el bote se cancelan: su delta es
+    // exactamente lo que le pagan los otros tres y la suma sale a cero.
+    expect(resolution.deltas).toStrictEqual([
+      move(A, 12000),
+      move(B, -4000),
+      move(C, -4000),
+      move(D, -4000),
+    ])
+
+    const sum = resolution.deltas.reduce((total, entry) => total + entry.delta, 0)
+    expect(sum).toBe(0)
+    expect(resolution.riichiSticks).toBe(0)
+
+    // El bote se reclamó entero, así que hay una ficha reclamada en este turno: la declarada.
+    expect(
+      checkSquare({
+        deltas: resolution.deltas,
+        riichiDeclared: 1,
+        riichiSticksClaimedThisTurn: 1,
+        chombos: 0,
+      }),
+    ).toStrictEqual({ ok: true })
+  })
+
+  /**
+   * T104: este es el error que costó el diagnóstico. El parámetro cuenta **todas** las fichas
+   * reclamadas en el turno, incluida la que se declara en él. Si se le pasa el bote previo (0
+   * cuando la mesa estaba vacía) exige −1000 y falla contra un 0 que es correcto.
+   */
+  it('contar solo el bote previo da un fallo falso (T104)', () => {
+    const suma = [move(A, 12000), move(B, -4000), move(C, -4000), move(D, -4000)]
+
+    expect(
+      checkSquare({
+        deltas: suma,
+        riichiDeclared: 1,
+        riichiSticksClaimedThisTurn: 0,
+        chombos: 0,
+      }),
+    ).toStrictEqual({ ok: false, expected: -1000, actual: 0 })
+  })
+
   it('una suma que no cumple la fórmula se rechaza con el esperado y el real', () => {
     expect(
       checkSquare({
         deltas: [move(B, -500)],
         riichiDeclared: 1,
-        riichiClaimed: 0,
+        riichiSticksClaimedThisTurn: 0,
         chombos: 0,
       }),
     ).toStrictEqual({ ok: false, expected: -1000, actual: -500 })
@@ -613,5 +678,104 @@ describe('T35 · detección de bancarrota', () => {
     expect(resolution.bankrupt).toBe(false)
     expect(resolution.bankruptPlayerId).toBeNull()
     expect(resolution.bankruptBalance).toBeNull()
+  })
+})
+
+describe('T06 · dealer real', () => {
+  /**
+   * RF-18.1 y RF-18.8: el dealer es el de `dealerId`, no quien ocupa el asiento Este. Antes de
+   * 002 el motor daba por hecho lo segundo, así que en cuanto la localía avanzaba del Este al
+   * Sur los pagos se calculaban contra el asiento equivocado y `checkSquare` no lo notaba,
+   * porque los deltas seguían cuadrando.
+   */
+  const DEALERS = [
+    { dealerId: A, seat: 'east' },
+    { dealerId: B, seat: 'south' },
+    { dealerId: C, seat: 'west' },
+    { dealerId: D, seat: 'north' },
+  ] as const
+
+  it.each(DEALERS)(
+    'un tsumo de 1 han 30 fu del dealer de $seat paga 500 de cada uno y cobra 1500',
+    ({ dealerId }) => {
+      const resolution = resolve(tsumoInput([win(dealerId, HAND_1)], { dealerId }))
+
+      expect(resolution.deltas).toStrictEqual(
+        DEALERS.map(({ dealerId: other }) => move(other, other === dealerId ? 1500 : -500)),
+      )
+    },
+  )
+
+  it.each(DEALERS)('un ron de 1 han 30 fu del dealer de $seat mueve 1500', ({ dealerId }) => {
+    const discarderId = dealerId === D ? C : D
+    const resolution = resolve(ronInput([win(dealerId, HAND_1)], discarderId, { dealerId }))
+
+    expect(resolution.deltas).toStrictEqual(
+      [dealerId, discarderId]
+        .sort((first, second) => seatOrder(first) - seatOrder(second))
+        .map((playerId) => move(playerId, playerId === dealerId ? 1500 : -1500)),
+    )
+  })
+
+  it.each(DEALERS)(
+    'un empate no depende del dealer de $seat: los tenpai cobran y el resto paga',
+    ({ dealerId }) => {
+      const resolution = resolve(drawInput([B, C, D], { dealerId }))
+
+      expect(resolution.deltas).toStrictEqual([
+        move(A, -3000),
+        move(B, 1000),
+        move(C, 1000),
+        move(D, 1000),
+      ])
+    },
+  )
+
+  it.each(DEALERS)(
+    'un chombo no depende del dealer de $seat: penaliza 8000 a quien abandona',
+    ({ dealerId }) => {
+      const resolution = resolve(chomboInput(C, { dealerId }))
+
+      expect(resolution.deltas).toStrictEqual([move(C, -8000)])
+    },
+  )
+
+  it('el mismo tsumo paga distinto según quién sea el dealer de verdad', () => {
+    const notDealer = resolve(tsumoInput([win(B, HAND_1)], { dealerId: A }))
+    const isDealer = resolve(tsumoInput([win(B, HAND_1)], { dealerId: B }))
+
+    // Sin ser dealer: 1100 para el ganador, y el Este paga 500 mientras los otros pagan 300.
+    expect(notDealer.deltas).toStrictEqual([
+      move(A, -500),
+      move(B, 1100),
+      move(C, -300),
+      move(D, -300),
+    ])
+    // Con la localía en el Sur: el ganador cobra 1500 y los tres pagan 500.
+    expect(isDealer.deltas).toStrictEqual([
+      move(A, -500),
+      move(B, 1500),
+      move(C, -500),
+      move(D, -500),
+    ])
+  })
+
+  it('el mismo ron mueve distinto según quién sea el dealer de verdad', () => {
+    const notDealer = resolve(ronInput([win(B, HAND_1)], C, { dealerId: A }))
+    const isDealer = resolve(ronInput([win(B, HAND_1)], C, { dealerId: B }))
+
+    expect(notDealer.deltas).toStrictEqual([move(B, 1000), move(C, -1000)])
+    expect(isDealer.deltas).toStrictEqual([move(B, 1500), move(C, -1500)])
+  })
+
+  it('un ganador que no es el dealer paga su parte como no dealer aunque esté en el Este', () => {
+    const resolution = resolve(tsumoInput([win(A, HAND_1)], { dealerId: B }))
+
+    expect(resolution.deltas).toStrictEqual([
+      move(A, 1100),
+      move(B, -500),
+      move(C, -300),
+      move(D, -300),
+    ])
   })
 })

@@ -291,19 +291,23 @@ Son tests de invariante, no de ejemplo. barren combinaciones en vez de comprobar
 | Test | Qué comprueba | RF |
 | --- | --- | --- |
 | `handValue.test.ts` → `'determinismo'` | El mismo input produce el mismo output con los objetos en distinto orden de claves | RF-16.5, RNF-1 |
-| `game.test.ts` → `'reproducción'` | Dada una partida completa de fixture, recomputar desde los turnos devuelve el mismo resultado | RNF-3, criterio 10 de la spec |
-| `game.test.ts` → `'resultado sin red'` | El resultado calculado con la caché local es idéntico al calculado con red | RNF-5, RNF-1 |
+| `recalculate.test.ts` → `'idempotencia'` | Recalcular dos veces las mismas partidas devuelve lo mismo, que es la condición que hace segura la finalización deshecha | RNF-3, RF-9.5 |
+
+**Lo que este plan declaraba y no se ha implementado.** Se retiran dos filas que aquí decían
+`game.test.ts` → `'reproducción'` y `game.test.ts` → `'resultado sin red'`: **ninguno de los dos
+`describe` existe**. La conclusión honesta es que la parte de RNF-1 y RNF-3 que exige variar
+capturador, dispositivo o red no tiene test, y que RNF-5 (`captura sin conexión`) se comprueba
+hoy solo por el cableado del SDK (`firebase.test.ts` → `initializeFirestore` con
+`persistentLocalCache`), no por comportamiento. Cubrirlo exige un test que simule la pérdida de
+red, no una aserción de configuración.
 
 ### 6.4 Fixtures
 
-Cuatro, en `src/__tests__/fixtures/`, reutilizadas por todos los módulos.
-
-| Fixture | Contenido | Cubre |
-| --- | --- | --- |
-| `tonpuusenSencilla` | Tonpuusen de 4 turnos, sin incidencias | Mínimo de turnos, RF-9.1 |
-| `hanchanConTodo` | Ron múltiple, suufon renta, empate con reparto de 3000, honba, riichi declarado en el mismo turno que la ganancia | RF-5, RF-6, RF-16 |
-| `partidaConChombo` | Chombo en el turno 5 con la partida larga, y otro chombo que deja a un jugador bajo cero | RF-7, RF-8.8, RF-0.4 |
-| `temporadaCompleta` | Tres temporadas con sus partidas, inclusa una sinSeason y otra en temporada cerrada | `seasons.ts`, `ranking.ts`, `stats.ts`, y que ninguna vista mezcle periodos (RNF-6) |
+En `src/__tests__/fixtures/` hay **una** de las cuatro declaradas: `temporadaCompleta.ts`. Las
+otras tres (`tonpuusenSencilla`, `hanchanConTodo`, `partidaConChombo`) no se han creado; los tests
+que las necesitarían construyen sus turnos en línea, así que su ausencia no deja ningún requisito
+sin cubrir, pero deja sin ejercitar la partida completa con reparto de riichi que pedía el
+criterio 7 de la spec.
 
 ### 6.5 Verificación por tarea
 
@@ -318,6 +322,12 @@ se declara incompleta. Un fallo ajeno al cambio se declara en la respuesta; no s
 paso.
 
 ## 7. Trazabilidad RF → módulo → test
+
+**La columna `Test` es una declaración de intención, no una verificación.** Una auditoría
+requisito por requisito (2026-10-08) comprobó las 131 filas contra el código y encontró que
+muchas se cumplen solo de forma indirecta: el test citado existe y pasa, pero comprueba el
+comportamiento por otra vía o lo hace solo en el dominio, no en la interfaz. Antes de dar una
+tarea por cerrada hay que abrir el test y confirmar que la aserción existe.
 
 | RF | Módulo o capa | Test |
 | --- | --- | --- |

@@ -1,0 +1,87 @@
+rules_version = '2';
+
+// Reglas de seguridad de MahjongBuClub (`AGENT.md` → Reglas de seguridad, plan.md §4.4).
+//
+// Lo único que sostiene RF-15 es que **escribir exige sesión y leer no**: el club es público en
+// sus resultados, así que lectura pública en todo el modelo y escritura autenticada en todo el
+// modelo. No hay niveles de permiso, ni jerarquía, ni claim `admin`: cualquier usuario con
+// sesión escribe igual que cualquier otro.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Sesión o nada. No mira ningún claim, así que no existe jerarquía ni nivel de permiso.
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // players/{playerId}: alta, edición y baja de jugadores (RF-1.x). Borrar exige sesión, pero
+    // no ningún claim adicional (RF-15.5).
+    match /players/{playerId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // seasons/{seasonId}: temporadas y su cierre (RF-11.x, RF-0.5).
+    match /seasons/{seasonId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // games/{gameId} y sus turnos: la pantalla de captura escribe aquí (RF-2.x, RF-3.x). Las
+    // reglas no repiten la lógica del dominio: qué es un turno válido o cuándo una partida
+    // está finalizada lo decide `domain/`, no la regla (constitution V.1).
+    match /games/{gameId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+
+      match /turns/{turnNo} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    // playerSeasonStats/{playerId}/stats/{seasonId}: derivado, se reescribe entero al finalizar
+    // o deshacer (RF-12.5, RF-9.5).
+    match /playerSeasonStats/{playerId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+
+      match /stats/{seasonId} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    // T105 · RF-12.5: `playerSeasonStats` se lee con `collectionGroup('stats')`, y una consulta a
+    // un grupo de colección solo se concede si las reglas cubren el grupo con un comodín
+    // recursivo sobre el padre. Con la ruta literal de arriba, Firestore no puede probar que la
+    // consulta solo devuelve documentos permitidos y la deniega entera («las reglas no son
+    // filtros»): el síntoma era un permission-denied que rompía también el borrado previo a
+    // reescribir las estadísticas al finalizar.
+    //
+    // El comodín no se puede acotar al padre: es la contrapartida de usar grupos de colección, así
+    // que aplica a cualquier `*/stats/{doc}`. En la práctica solo existen los documentos de
+    // `playerSeasonStats`, y RF-15.5 da a cualquier sesión con cuenta los mismos poderes.
+    match /{parent=**}/stats/{seasonId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // rankings/{seasonId}/players/{playerId}: derivado, mismo criterio (RF-13.5, RF-9.5).
+    match /rankings/{seasonId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+
+      match /players/{playerId} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    // Cualquier otra colección queda cerrada: sin regla no hay acceso, y esto lo hace explícito.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

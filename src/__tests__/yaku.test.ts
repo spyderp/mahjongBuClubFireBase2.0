@@ -143,6 +143,23 @@ describe('T11 · catálogo de los trece yaku de límite', () => {
 
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  /**
+   * Desviación nº 3 de `docs/domain.md` §4.5: el double riichi no se reconoce. No existe entrada
+   * en el catálogo y el único yaku de riichi puntúa 1 han, aunque la mano reúna las dos
+   * condiciones (riichi e ippatsu).
+   */
+  it('no reconoce el double riichi (desviación nº 3 de docs/domain.md §4.5)', () => {
+    expect(findYaku('doubleRiichi' as YakuId)).toBeUndefined()
+
+    const normalRiichiLike = YAKU_CATALOG.filter(
+      (definition) => definition.category === 'normal' && /riichi/i.test(definition.id),
+    )
+
+    expect(normalRiichiLike.map((definition) => definition.id)).toEqual(['riichi'])
+    expect(normalRiichiLike[0]?.han).toBe(1)
+    expect(hanOf('riichi') + hanOf('ippatsu')).toBe(2)
+  })
 })
 
 describe('T12 · reglas de fu', () => {

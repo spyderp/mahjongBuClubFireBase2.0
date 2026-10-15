@@ -1,0 +1,23 @@
+/*
+ * T84 · Tokens de diseño y tema único dark (AGENT.md → Tailwind). Las variables viven en
+ * `@theme` de Tailwind v4 y generan utilitates como `bg-mahjong-surface`; los componentes
+ * no escriben hexadecimales sueltos en su `<style scoped>` (constitution, AGENT.md → Tailwind).
+ */
+@import 'tailwindcss';
+
+@theme {
+  --color-mahjong-bg: #10131a;
+  --color-mahjong-surface: #1a1f29;
+  --color-mahjong-border: #2c3442;
+  --color-mahjong-text: #e6e9f0;
+  --color-mahjong-muted: #9aa3b2;
+  --color-mahjong-accent: #e5484d;
+  --color-mahjong-accent-soft: #f2555a;
+  --color-mahjong-positive: #30a46c;
+  --color-mahjong-negative: #e5484d;
+  --color-mahjong-warning: #f5a623;
+}
+
+:root {
+  color-scheme: dark;
+}

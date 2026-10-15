@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { canFinalize, isRenchan, minTurns, needsExtension, nextHand } from '@/domain/rules'
+import {
+  canFinalize,
+  initialHandState,
+  isRenchan,
+  minTurns,
+  needsExtension,
+  nextHand,
+} from '@/domain/rules'
 import type { HandOutcome, HandState } from '@/domain/rules'
 import type { Seat } from '@/domain/types'
 
@@ -9,6 +16,24 @@ function hand(
 ): HandState {
   return { wind: overrides.wind ?? 'east', dealer, honba: overrides.honba ?? 0 }
 }
+
+describe('T07 · estado inicial de la partida', () => {
+  it('la partida arranca en la ronda del Este, con el Este de localía y honba 0', () => {
+    expect(initialHandState()).toStrictEqual({ wind: 'east', dealer: 'east', honba: 0 })
+  })
+
+  it('el estado inicial no depende de dónde venga: es siempre el mismo', () => {
+    expect(initialHandState()).toStrictEqual(initialHandState())
+  })
+
+  it('desde el estado inicial, una mano que no conserva la tenpai avanza al Sur', () => {
+    expect(nextHand(initialHandState(), { type: 'otherDraw' })).toStrictEqual({
+      wind: 'east',
+      dealer: 'south',
+      honba: 1,
+    })
+  })
+})
 
 describe('T36 · mínimo de turnos por modo', () => {
   it('tonpuusen exige 4 manos', () => {
@@ -116,5 +141,19 @@ describe('T38 · renchan y prórroga', () => {
     expect(needsExtension(29900)).toBe(true)
     expect(needsExtension(30000)).toBe(false)
     expect(needsExtension(30500)).toBe(false)
+  })
+
+  /**
+   * Desviación nº 2 de `docs/domain.md` §4.5: los 30 000 puntos avertan pero no cierran la
+   * partida. Ninguna función de este módulo recibe el marcador, así que superar el punto de
+   * retorno no bloquea la captura ni habilita la finalización por encima del mínimo de turnos.
+   */
+  it('superar los 30 000 puntos no cierra la partida ni la prolongation (desviación nº 2)', () => {
+    for (const leaderScore of [30000, 30500, 40000]) {
+      expect(needsExtension(leaderScore)).toBe(false)
+      expect(canFinalize(4, 'tonpuusen')).toBe(true)
+      expect(canFinalize(8, 'hanchan')).toBe(true)
+      expect(isRenchan({ type: 'dealerWin' })).toBe(true)
+    }
   })
 })

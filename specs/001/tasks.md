@@ -126,79 +126,163 @@ Ninguna cubre RF: es lo que hace posible cumplir constitution III.1.
 
 ## Fase 8 · `domain/ranking.ts`, `stats.ts` y `recalculate.ts` — 5 tareas
 
-- [ ] **T52** Agregación por jugador · **Cubre:** RF-12.1, RF-12.2, RF-12.3, RF-12.8 · **Hecho cuando:** `stats.test.ts` cuenta partidas finalizadas, victorias y desglose de posiciones, y `actualPoints` suma puntuaciones con uma.
-- [ ] **T53** Contadores de yaku por jugador · **Cubre:** RF-12.4 · **Hecho cuando:** `stats.test.ts` acumula los nueve contadores, y `yakuman` suma 1 por mano con yaku de límite o 13+ han aunque tenga cuatro.
-- [ ] **T54** Clasificación y desempate · **Cubre:** RF-13.1, RF-13.2, RF-13.3, RF-13.4, RF-13.6 · **Hecho cuando:** `ranking.test.ts` ordena por `points` con uma, desempata por victorias, luego segundas y luego alfabeto, y devuelve vacío sin partidas finalizadas.
-- [ ] **T55** `recalculate` idempotente · **Cubre:** RF-0.2, RF-9.5, RF-9.6, RF-12.7 · **Hecho cuando:** el `describe('idempotencia')` recalcula dos veces las mismas partidas de la fixture `temporadaCompleta` y ambos resultados son profundamente iguales, y solo entran partidas `finalized`.
-- [ ] **T56** Orden total y estable · **Cubre:** RF-13.1, RF-13.3 · **Hecho cuando:** el `describe('desempate')` comprueba que dos jugadores empatados en todo dan un orden que no depende del orden de entrada del array.
+- [x] **T52** Agregación por jugador · **Cubre:** RF-12.1, RF-12.2, RF-12.3, RF-12.8 · **Hecho cuando:** `stats.test.ts` cuenta partidas finalizadas, victorias y desglose de posiciones, y `actualPoints` suma puntuaciones con uma.
+- [x] **T53** Contadores de yaku por jugador · **Cubre:** RF-12.4 · **Hecho cuando:** `stats.test.ts` acumula los nueve contadores, y `yakuman` suma 1 por mano con yaku de límite o 13+ han aunque tenga cuatro.
+- [x] **T54** Clasificación y desempate · **Cubre:** RF-13.1, RF-13.2, RF-13.3, RF-13.4, RF-13.6 · **Hecho cuando:** `ranking.test.ts` ordena por `points` con uma, desempata por victorias, luego segundas y luego alfabeto, y devuelve vacío sin partidas finalizadas.
+- [x] **T55** `recalculate` idempotente · **Cubre:** RF-0.2, RF-9.5, RF-9.6, RF-12.7 · **Hecho cuando:** el `describe('idempotencia')` recalcula dos veces las mismas partidas de la fixture `temporadaCompleta` y ambos resultados son profundamente iguales, y solo entran partidas `finalized`.
+- [x] **T56** Orden total y estable · **Cubre:** RF-13.1, RF-13.3 · **Hecho cuando:** el `describe('desempate')` comprueba que dos jugadores empatados en todo dan un orden que no depende del orden de entrada del array.
 
 ---
 
 ## Puerta de dominio
 
-- [ ] **T57** Cobertura del 100 % en `src/domain/` · **Cubre:** todos los RF de dominio · **Hecho cuando:** `npm run test:coverage` informa 100 % de líneas, ramas y funciones sobre `src/domain/` (constitution IV.1).
+- [x] **T57** Cobertura del 100 % en `src/domain/` · **Cubre:** todos los RF de dominio · **Hecho cuando:** `npm run test:coverage` informa 100 % de líneas, ramas y funciones sobre `src/domain/` (constitution IV.1).
 
 ---
 
 ## Fase 9 · `data/` — 7 tareas
 
-- [ ] **T58** `app/firebase.ts` con caché local persistente · **Cubre:** RF-15.6 · **Hecho cuando:** la inicialización usa `initializeFirestore` con `persistentLocalCache` y no llama a `getFirestore`.
-- [ ] **T59** `batch.ts` · **Cubre:** RF-9.5 · **Hecho cuando:** cada función de escritura acepta un `batch?: WriteBatch` opcional y por defecto usa el suyo.
-- [ ] **T60** `players.repository.ts` · **Cubre:** RF-1.1 a RF-1.7, RF-0.7 · **Hecho cuando:** `create` no borra contadores derivados y `findByExternalId` devuelve el jugador o `null`.
-- [ ] **T61** `seasons.repository.ts` · **Cubre:** RF-11.1 a RF-11.7, RF-0.5 · **Hecho cuando:** `findOverlapping` y `findByDateRange` traen su comentario de índice compuesto.
-- [ ] **T62** `games.repository.ts` · **Cubre:** RF-2.1 a RF-2.9, RF-0.1, RF-9.3 · **Hecho cuando:** `listOpen` filtra por `status` y `updatedAt`, y `update` rechaza cambios en un juego `finalized`.
-- [ ] **T63** `turns.repository.ts` · **Cubre:** RF-3.1 a RF-3.8 · **Hecho cuando:** `create` falla con el turno duplicado y `nextNumber` devuelve el siguiente sin huecos.
-- [ ] **T64** Repositorios derivados · **Cubre:** RF-12.5, RF-13.5 · **Hecho cuando:** `replaceForSeason` escribe los documentos derivados del batch que recibe y no toca los de otras temporadas.
+- [x] **T58** `app/firebase.ts` con caché local persistente · **Cubre:** RF-15.6 · **Hecho cuando:** la inicialización usa `initializeFirestore` con `persistentLocalCache` y no llama a `getFirestore`.
+- [x] **T59** `batch.ts` · **Cubre:** RF-9.5 · **Hecho cuando:** cada función de escritura acepta un `batch?: WriteBatch` opcional y por defecto usa el suyo.
+- [x] **T60** `players.repository.ts` · **Cubre:** RF-1.1 a RF-1.7, RF-0.7 · **Hecho cuando:** `create` no borra contadores derivados y `findByExternalId` devuelve el jugador o `null`.
+- [x] **T61** `seasons.repository.ts` · **Cubre:** RF-11.1 a RF-11.7, RF-0.5 · **Hecho cuando:** `findOverlapping` y `findByDateRange` traen su comentario de índice compuesto.
+- [x] **T62** `games.repository.ts` · **Cubre:** RF-2.1 a RF-2.9, RF-0.1, RF-9.3 · **Hecho cuando:** `listOpen` filtra por `status` y `updatedAt`, y `update` rechaza cambios en un juego `finalized`.
+- [x] **T63** `turns.repository.ts` · **Cubre:** RF-3.1 a RF-3.8 · **Hecho cuando:** `create` falla con el turno duplicado y `nextNumber` devuelve el siguiente sin huecos.
+- [x] **T64** Repositorios derivados · **Cubre:** RF-12.5, RF-13.5 · **Hecho cuando:** `replaceForSeason` escribe los documentos derivados del batch que recibe y no toca los de otras temporadas.
 
 ---
 
 ## Fase 10 · `queries/`, `composables/` y `stores/` — 7 tareas
 
-- [ ] **T65** `queries/players` + `usePlayers` · **Cubre:** RF-1.1 a RF-1.7 · **Hecho cuando:** expone `{ data, isLoading, error, refresh }` y estrecha por `state.status` (constitution VI.2).
-- [ ] **T66** `queries/seasons` + `useSeasons` · **Cubre:** RF-11.1 a RF-11.7 · **Hecho cuando:** tras crear invalida `['seasons']` y tras cerrar invalida `['games']`.
-- [ ] **T67** `queries/games` + `useGames` · **Cubre:** RF-2.1 a RF-2.9, RF-9.1 a RF-9.6 · **Hecho cuando:** finalizar y deshacer invalidan `['season-stats', seasonId]` y `['rankings', seasonId]`.
-- [ ] **T68** `queries/turns` + `useGameTurns` · **Cubre:** RF-3.1 a RF-3.14, RF-4.x, RF-15.7, RF-15.8 · **Hecho cuando:** registra, corrige y abandona, y guarda el borrador en `localStorage` al confirmar.
-- [ ] **T69** Queries derivadas · **Cubre:** RF-12.5, RF-13.5 a RF-13.7 · **Hecho cuando:** ambas usan `enabled` cuando falta `seasonId` y no dependen una de otra.
-- [ ] **T70** `stores/session.ts` · **Cubre:** RF-15.1 a RF-15.5 · **Hecho cuando:** no llama a `useQuery()` y mantiene el usuario entre navegaciones (constitution V.2).
-- [ ] **T71** `stores/preferences.ts` · **Cubre:** RF-13.7 · **Hecho cuando:** persiste la última temporada vista en `localStorage` y ningún store consume `useQuery()`.
+- [x] **T65** `queries/players` + `usePlayers` · **Cubre:** RF-1.1 a RF-1.7 · **Hecho cuando:** expone `{ data, isLoading, error, refresh }` y estrecha por `state.status` (constitution VI.2).
+- [x] **T66** `queries/seasons` + `useSeasons` · **Cubre:** RF-11.1 a RF-11.7 · **Hecho cuando:** tras crear invalida `['seasons']` y tras cerrar invalida `['games']`.
+- [x] **T67** `queries/games` + `useGames` · **Cubre:** RF-2.1 a RF-2.9, RF-9.1 a RF-9.6 · **Hecho cuando:** finalizar y deshacer invalidan `['season-stats', seasonId]` y `['rankings', seasonId]`.
+- [x] **T68** `queries/turns` + `useGameTurns` · **Cubre:** RF-3.1 a RF-3.14, RF-4.x, RF-15.7, RF-15.8 · **Hecho cuando:** registra, corrige y abandona, y guarda el borrador en `localStorage` al confirmar.
+- [x] **T69** Queries derivadas · **Cubre:** RF-12.5, RF-13.5 a RF-13.7 · **Hecho cuando:** ambas usan `enabled` cuando falta `seasonId` y no dependen una de otra.
+- [x] **T70** `stores/session.ts` · **Cubre:** RF-15.1 a RF-15.5 · **Hecho cuando:** no llama a `useQuery()` y mantiene el usuario entre navegaciones (constitution V.2).
+- [x] **T71** `stores/preferences.ts` · **Cubre:** RF-13.7 · **Hecho cuando:** persiste la última temporada vista en `localStorage` y ningún store consume `useQuery()`.
 
 ---
 
 ## Fase 11 · i18n, interfaz y gráficas — 13 tareas
 
-- [ ] **T72** `i18n/locales/es.ts` con los tokens base · **Cubre:** — · **Hecho cuando:** existen los grupos `errors.*`, `uma.*`, `yaku.*` y `handValue.*`, y no hay texto literal en ningún componente.
-- [ ] **T73** `BaseButton`, `BaseInput`, `BaseSelect` · **Cubre:** — · **Hecho cuando:** los tres aceptan `defineProps<Props>()` tipado y no mutan props.
-- [ ] **T74** `BaseDialog`, `BaseSnackbar`, `BaseCard` · **Cubre:** — · **Hecho cuando:** `BaseDialog` emite `close` y no usa `alert`, `confirm` ni `prompt`.
-- [ ] **T75** `BaseTable` · **Cubre:** — · **Hecho cuando:** formatea números y fechas por i18n, nunca con `toFixed`.
-- [ ] **T76** `AppShell`, `AppHeader`, `AppNav` · **Cubre:** RF-14.4 · **Hecho cuando:** la navegación oculta las acciones de captura sin sesión y ninguna delata credenciales.
-- [ ] **T77** `PlayerForm` · **Cubre:** RF-1.2, RF-1.8, RF-1.9 · **Hecho cuando:** avisa de coincidencia de `externalId` o nombre, y muestra las tres razones de rechazo de nombre.
-- [ ] **T78** `SeasonForm` · **Cubre:** RF-11.1, RF-11.2, RF-11.3 · **Hecho cuando:** el solapamiento y el rango invertido bloquean la creación con mensaje propio.
-- [ ] **T79** `GameForm` · **Cubre:** RF-2.1 a RF-2.9 · **Hecho cuando:** exige cuatro asientos válidos, longitud y fecha, y avisa si un jugador ya está en otra partida abierta sin bloquear.
-- [ ] **T80** `TurnForm`: datos de partida · **Cubre:** RF-3.12, RF-3.14, RF-15.8 · **Hecho cuando:** exige tipo de resultado y tenpai en empate, y el borrador sobrevive a recargar.
-- [ ] **T81** `TurnForm`: mano y validación · **Cubre:** RF-3.13, RF-4.2 a RF-4.8, RF-15.7 · **Hecho cuando:** pide yaku, han de yaku, dora, fu, honba y localía, y cada rechazo muestra su clave `errors.turn.*` concreta.
-- [ ] **T82** `PointsEvolutionChart` y `PositionsChart` · **Cubre:** RF-17.1, RF-17.2, RF-17.4, RF-17.5 · **Hecho cuando:** reciben los datos por props, no consultan nada, y destruyen la instancia en `onBeforeUnmount`.
-- [ ] **T83** `YakuChart` · **Cubre:** RF-17.3, RF-17.4, RF-17.5 · **Hecho cuando:** cada barra dibujada es el mismo valor que muestra la tabla de estadísticas.
-- [ ] **T84** `styles/main.css` y `palette.ts` · **Cubre:** — · **Hecho cuando:** los tokens están en `@theme`, no hay hexadecimales sueltos en `<style scoped>` y la paleta se declara una sola vez.
+- [x] **T72** `i18n/locales/es.ts` con los tokens base · **Cubre:** — · **Hecho cuando:** existen los grupos `errors.*`, `uma.*`, `yaku.*` y `handValue.*`, y no hay texto literal en ningún componente.
+- [x] **T73** `BaseButton`, `BaseInput`, `BaseSelect` · **Cubre:** — · **Hecho cuando:** los tres aceptan `defineProps<Props>()` tipado y no mutan props.
+- [x] **T74** `BaseDialog`, `BaseSnackbar`, `BaseCard` · **Cubre:** — · **Hecho cuando:** `BaseDialog` emite `close` y no usa `alert`, `confirm` ni `prompt`.
+- [x] **T75** `BaseTable` · **Cubre:** — · **Hecho cuando:** formatea números y fechas por i18n, nunca con `toFixed`.
+- [x] **T76** `AppShell`, `AppHeader`, `AppNav` · **Cubre:** RF-14.4 · **Hecho cuando:** la navegación oculta las acciones de captura sin sesión y ninguna delata credenciales.
+- [x] **T77** `PlayerForm` · **Cubre:** RF-1.2, RF-1.8, RF-1.9 · **Hecho cuando:** avisa de coincidencia de `externalId` o nombre, y muestra las tres razones de rechazo de nombre.
+- [x] **T78** `SeasonForm` · **Cubre:** RF-11.1, RF-11.2, RF-11.3 · **Hecho cuando:** el solapamiento y el rango invertido bloquean la creación con mensaje propio.
+- [x] **T79** `GameForm` · **Cubre:** RF-2.1 a RF-2.9 · **Hecho cuando:** exige cuatro asientos válidos, longitud y fecha, y avisa si un jugador ya está en otra partida abierta sin bloquear.
+- [x] **T80** `TurnForm`: datos de partida · **Cubre:** RF-3.12, RF-3.14, RF-15.8 · **Hecho cuando:** exige tipo de resultado y tenpai en empate, y el borrador sobrevive a recargar.
+- [x] **T81** `TurnForm`: mano y validación · **Cubre:** RF-3.13, RF-4.2 a RF-4.8, RF-15.7 · **Hecho cuando:** pide yaku, han de yaku, dora, fu, honba y localía, y cada rechazo muestra su clave `errors.turn.*` concreta.
+- [x] **T82** `PointsEvolutionChart` y `PositionsChart` · **Cubre:** RF-17.1, RF-17.2, RF-17.4, RF-17.5 · **Hecho cuando:** reciben los datos por props, no consultan nada, y destruyen la instancia en `onBeforeUnmount`.
+- [x] **T83** `YakuChart` · **Cubre:** RF-17.3, RF-17.4, RF-17.5 · **Hecho cuando:** cada barra dibujada es el mismo valor que muestra la tabla de estadísticas.
+- [x] **T84** `styles/main.css` y `palette.ts` · **Cubre:** — · **Hecho cuando:** los tokens están en `@theme`, no hay hexadecimales sueltos en `<style scoped>` y la paleta se declara una sola vez.
 
 ---
 
 ## Fase 12 · Páginas y rutas — 6 tareas
 
-- [ ] **T85** `DashboardPage` · **Cubre:** RNF-4 · **Hecho cuando:** se ve correctamente a 360 px de ancho y en escritorio.
-- [ ] **T86** `GamesPage` y `GameDetailPage` · **Cubre:** RF-2.x, RF-3.x, RF-4.x, RF-9.x, RF-10.x · **Hecho cuando:** `GameDetailPage` confirma antes de finalizar, y una partida `abortada` no ofrece finalizar.
-- [ ] **T87** `PlayersPage` y `SeasonsPage` · **Cubre:** RF-1.x, RF-11.x · **Hecho cuando:** un jugador dado de baja conserva su histórico visible, y una temporada cerrada no admite partidas nuevas.
-- [ ] **T88** `StatsPage` y `RankingsPage` · **Cubre:** RF-12.x, RF-13.x, RF-17.x · **Hecho cuando:** el ranking exige temporada elegida y cada cifra enlaza a las partidas que la componen.
-- [ ] **T89** `LoginPage` · **Cubre:** RF-14.3, RF-15.4 · **Hecho cuando:** un intento de acceso no muestra detalles de cuenta ni información de otros usuarios.
-- [ ] **T90** Router y guard de sesión · **Cubre:** RF-14.2, RF-15.1, RF-15.3 · **Hecho cuando:** una acción de captura sin sesión redirige al acceso y conserva lo escrito.
+- [x] **T85** `DashboardPage` · **Cubre:** RNF-4 · **Hecho cuando:** se ve correctamente a 360 px de ancho y en escritorio.
+- [x] **T86** `GamesPage` y `GameDetailPage` · **Cubre:** RF-2.x, RF-3.x, RF-4.x, RF-9.x, RF-10.x · **Hecho cuando:** `GameDetailPage` confirma antes de finalizar, y una partida `abortada` no ofrece finalizar.
+- [x] **T87** `PlayersPage` y `SeasonsPage` · **Cubre:** RF-1.x, RF-11.x · **Hecho cuando:** un jugador dado de baja conserva su histórico visible, y una temporada cerrada no admite partidas nuevas.
+- [x] **T88** `StatsPage` y `RankingsPage` · **Cubre:** RF-12.x, RF-13.x, RF-17.x · **Hecho cuando:** el ranking exige temporada elegida y cada cifra enlaza a las partidas que la componen.
+- [x] **T89** `LoginPage` · **Cubre:** RF-14.3, RF-15.4 · **Hecho cuando:** un intento de acceso no muestra detalles de cuenta ni información de otros usuarios.
+- [x] **T90** Router y guard de sesión · **Cubre:** RF-14.2, RF-15.1, RF-15.3 · **Hecho cuando:** una acción de captura sin sesión redirige al acceso y conserva lo escrito.
 
 ---
 
 ## Fase 13 · Seguridad y cierre — 4 tareas
 
-- [ ] **T91** `firestore.rules` · **Cubre:** RF-14.1, RF-14.2, RF-15.1, RF-15.2, RF-15.5 · **Hecho cuando:** la lectura es pública, la escritura exige sesión y no hay ninguna regla con `admin`.
-- [ ] **T92** `rules.test.ts` contra el emulador · **Cubre:** RF-14.1, RF-14.2, RF-15.1, RF-15.2 · **Hecho cuando:** un anónimo lee, un anónimo recibe `permission-denied` al escribir, y un autenticado escribe.
-- [ ] **T93** Cobertura final y los cuatro en verde · **Cubre:** todos · **Hecho cuando:** `typecheck && lint && test && format:check` pasan en ese orden, y `test:coverage` mantiene el 100 % de `src/domain/`.
-- [ ] **T94** Checklist de salida · **Cubre:** todos · **Hecho cuando:** las 10 condiciones de `plan.md` §8 están comprobadas una a una, y las 6 desviaciones de `../../docs/domain.md` §4.5 tienen su test.
+- [x] **T91** `firestore.rules` · **Cubre:** RF-14.1, RF-14.2, RF-15.1, RF-15.2, RF-15.5 · **Hecho cuando:** la lectura es pública, la escritura exige sesión y no hay ninguna regla con `admin`.
+- [x] **T92** `rules.test.ts` contra el emulador · **Cubre:** RF-14.1, RF-14.2, RF-15.1, RF-15.2 · **Hecho cuando:** un anónimo lee, un anónimo recibe `permission-denied` al escribir, y un autenticado escribe.
+
+> **✅ Cerrada contra el emulador (2026-10-08).** Los cuatro tests pasan de verdad, sin `skip`.
+> Se ejecutó el emulador de Firestore y el de Auth dentro de un contenedor (`node:20` con JRE 17 y
+> `firebase-tools`), publicado en `127.0.0.1:8080` y `127.0.0.1:9099`, de modo que **no hace
+> falta instalar ninguna JRE en la máquina**. Con las dos variables de entorno definidas, la suite
+> completa queda en `532 passed` y `0 skipped`.
+>
+> Al ejecutarlos aparecieron dos defectos reales del propio test, que hasta entonces nunca se
+> habían visto porque el bloque se saltaba siempre:
+>
+> - `initializeApp` se llamaba sin `apiKey`, así que `getAuth` fallaba con `auth/invalid-api-key`
+>   antes de tocar la base de datos. El emulador no acepta esa inicialización.
+> - `afterAll` llamaba a `terminate(db)` sin comprobar que `db` existiera.
+>
+> Además el fichero pasó a `@vitest-environment node`: con `happy-dom` el `fetch` que intercepta el
+> SDK de Auth no habla con el emulador (`socket hang up`).
+- [x] **T93** Cobertura final y los cuatro en verde · **Cubre:** todos · **Hecho cuando:** `typecheck && lint && test && format:check` pasan en ese orden, y `test:coverage` mantiene el 100 % de `src/domain/`.
+- [x] **T94** Checklist de salida · **Cubre:** todos · **Hecho cuando:** las 10 condiciones de `plan.md` §8 están comprobadas una a una, y las 6 desviaciones de `../../docs/domain.md` §4.5 tienen su test.
+
+---
+
+## Fase 14 · Autenticación — 9 tareas
+
+Abre el hallazgo **A19** de `../../docs/reviews/001-qa.md`: el cierre de A14 («sesión comprobada, no
+gestionada») dejó la aplicación sin ninguna forma de **obtener** la sesión que exigen RF-15.1 y
+RF-15.2, de modo que `firestore.rules` denegaba toda escritura. T89 y T90 quedan como estaban: una
+tarea marcada no se desmarca.
+
+- [x] **T95** Cerrar el mecanismo en la spec · **Cubre:** RF-15.9 · **Hecho cuando:** `spec.md` tiene RF-15.9, el criterio 21, la duda 27 y §10.5 distingue autenticación (dentro) de gestión de cuentas (fuera).
+- [x] **T96** Hallazgo `A19` en `../../docs/reviews/001-qa.md` · **Cubre:** — · **Hecho cuando:** consta por qué A14 no bastaba y dónde se cierra, y el recuento de hallazgos sigue cuadrando.
+- [x] **T97** `BaseInput` admite `email`, `password` y `autocomplete` · **Cubre:** RF-15.9 · **Hecho cuando:** `BaseInput.test.ts` comprueba los tres como props declaradas, no como atributos caídos, y el typecheck acepta los dos tipos nuevos.
+- [x] **T98** `app/firebase.ts`: acceso y traducción de errores · **Cubre:** RF-15.9, RF-14.3 · **Hecho cuando:** `firebase.test.ts` comprueba que `signInWithEmail` llama al SDK con el correo y la contraseña recibidos, y que `user-not-found` y `wrong-password` producen el mismo `AuthError` sin filtrar el código del SDK.
+- [x] **T99** `stores/session.ts`: `signIn` y `pending` · **Cubre:** RF-15.9, RF-15.4 · **Hecho cuando:** `session.test.ts` comprueba que `signIn` delega en `app/firebase.ts`, marca `pending` mientras espera, y que el estado lo sigue fijando `onAuthStateChanged`.
+- [x] **T100** `LoginPage`: formulario de acceso · **Cubre:** RF-15.9, RF-14.3 · **Hecho cuando:** `LoginPage.test.ts` pide correo y contraseña con su `autocomplete`, y un rechazo muestra un único mensaje que no dice si la cuenta existe.
+- [x] **T101** `LoginPage`: vuelta a la ruta interrumpida · **Cubre:** RF-15.3, RF-15.7 · **Hecho cuando:** con `query.redirect` se vuelve a esa ruta interna, sin ella al panel, y un `redirect` que no es interno se ignora.
+- [x] **T102** `AppHeader` con sesión sin `displayName` · **Cubre:** RNF-7 · **Hecho cuando:** una cuenta creada con correo muestra una etiqueta neutra, y ni el correo ni el identificador aparecen en pantalla.
+- [x] **T103** Los cuatro en verde y el 100 % de `domain/` · **Cubre:** todos · **Hecho cuando:** `typecheck && lint && test && format:check` pasan en ese orden, `test:coverage` mantiene el 100 % de `src/domain/`, y `../../AGENT.md` documenta la costura de autenticación.
+
+**Bug de producción encontrado por T98.** `signOutSession()` llamaba a `getAuthInstance().signOut()`,
+un método que el objeto `Auth` no tiene: el botón «Cerrar sesión» de `AppHeader` fallaba en el
+navegador y ningún test lo detectaba porque `session.test.ts` sustituye el módulo entero. Corregido
+a la función `signOut(auth)` del SDK, con su test en `firebase.test.ts`.
+
+---
+
+## Fase 15 · Contrato del invariante de cuadre — 1 tarea
+
+Abre un hallazgo del club al usar la aplicación: `resolveTurn` cuadraba bien, pero `checkSquare`
+recibía un parámetro cuyo nombre invitaba a pasar el bote **previo** en lugar del reclamado, y
+`../../docs/domain.md` afirmaba que el pago del riichi no entraba en los deltas, contradiciendo a
+RF-4.1 y al código.
+
+- [x] **T104** Contrato de `checkSquare` y frase del riichi · **Cubre:** RF-4.1, RF-5.1, RF-5.3 · **Hecho cuando:** el parámetro se llama `riichiSticksClaimedThisTurn` y su comentario dice que cuenta las fichas declaradas en el propio turno; el caso «el ganador declara riichi en la mano que gana con la mesa vacía» tiene test con sus números, y `TurnForm` compara con las fichas de ese turno y no solo con el bote previo; y `../../docs/domain.md` dice que el pago entra en el delta del declarante y vuelve al ganador si ese mismo turno se lleva el bote.
+
+**Lo que fallaba de verdad.** `TurnForm` pasaba a `checkSquare` las fichas **previas** de la mesa en lugar de las reclamadas en el turno, así que pedía `−1000` contra un Σ que ya era 0 y rechazaba la captura con `errors.turn.notSquare`: el turno no se guardaba y solo se veía «La suma de deltas no cuadra». El motor nunca estuvo mal. Como caso: 5 han (riichi + ippatsu + tsumo cerrado + 2 dora) es **mangan**, así que el Este cobra 4000 de cada uno, su propio riichi le vuelve con el bote y su delta es **+12 000** frente a −4000 × 3, con Σ = 0.
+
+---
+
+## Fase 16 · Reglas para consultas por grupo de colección — 1 tarea
+
+Abre un hallazgo del club al usar la aplicación: la pantalla de estadísticas respondía
+`permission-denied`. Las reglas cubrían la ruta literal `playerSeasonStats/{playerId}/stats/{seasonId}`,
+pero el repositorio consulta `collectionGroup('stats')`, y una consulta a un grupo de colección solo
+se concede si las reglas cubren el grupo con un comodín recursivo sobre el padre.
+
+- [x] **T105** Comodín recursivo para el grupo `stats` · **Cubre:** RF-12.5, RF-12.7, RF-15.1 · **Hecho cuando:** `firestore.rules.test.ts` extrae los grupos de colección del código y todos tienen regla `/{parent=**}/{grupo}/{doc}` con lectura pública y escritura autenticada.
+
+**Lo que fallaba de verdad.** `collectionGroup('stats')` se usaba en dos sitios de
+`playerSeasonStats.repository.ts`: la lectura que ve la pantalla de estadísticas, y el borrado previo de
+`replaceForSeason`. Con la ruta literal, Firestore no puede probar que la consulta solo devuelve
+documentos permitidos y **deniega la petición entera**, no solo los documentos que no encajen. Por eso el
+síntoma era doble: las estadísticas no cargaban **y** finalizar una partida tampoco podía reescribir
+sus derivados. El comodín no se puede acotar al padre —es la contrapartida de usar grupos de colección—,
+así que aplica a cualquier `*/stats/{doc}`; queda anotado en la propia regla.
+
+---
+
+## Fase 17 · Índice del grupo de colección `stats` — 1 tarea
+
+Segunda mitad del mismo hallazgo: con la regla ya correcta, la consulta pasó de `permission-denied` a `failed-precondition`. Firestore solo crea índices automáticos de un solo campo **con alcance `COLLECTION`**; los de grupo hay que declararlos, aunque tengan un solo campo.
+
+- [x] **T106** Índice de `stats` con alcance `COLLECTION_GROUP` · **Cubre:** RF-12.5, RF-12.7 · **Hecho cuando:** `firestore.indexes.test.ts` extrae del código los grupos de colección que se consultan y cada uno tiene su índice de alcance `COLLECTION_GROUP` cubriendo los campos filtrados, con el comentario de índice en su repositorio; y los índices de un solo campo solo se prohuden con alcance `COLLECTION`.
+
+**Lo que fallaba de verdad, y por qué costó tres arreglos.** `playerSeasonStats` consulta `collectionGroup('stats')`, y eso arrastra tres consecuencias que hubo que descubrir una detrás de otra: las reglas necesitan un comodín recursivo sobre el padre (T105), el índice se declara a mano con alcance `COLLECTION_GROUP` (esta tarea), y la segunda consulta —el borrado previo de `replaceForSeason`— sigue sin verificarse contra el emulador (T92). El test que bloqueaba esto estaba en el propio `firestore.indexes.test.ts`: afirmaba «Firestore crea solo los índices de un solo campo» sin excluir el caso del grupo, y por eso impedía añadir el índice que hacía falta.
+
+**Alternativa que evita las tres.** Consultar `playerSeasonStats/{seasonId}/players/{playerId}`, igual que ya hace `rankings`, elimina el grupo de colección: sin comodín, sin índice de grupo y sin la causa de la cadena. Se dejó el comodín por decisión del club y porque el cambio de modelo toca `plan.md §4.1` y `AGENT.md`.
 
 ---
 
@@ -261,21 +345,22 @@ Ninguna tarea de este listado deja RF sin cubrir. Los RF sin tarea propia son lo
 | RF-11.1 a RF-11.7 | T61, T66 |
 | RF-12.1 a RF-12.3, RF-12.8 | T52 |
 | RF-12.4 | T10, T53 |
-| RF-12.5 | T64, T69 |
+| RF-12.5 | T64, T69, T105, T106 |
 | RF-12.6 | T52 |
-| RF-12.7 | T55 |
+| RF-12.7 | T55, T105, T106 |
 | RF-13.1 a RF-13.4, RF-13.6 | T54 |
 | RF-13.5 | T64, T69 |
 | RF-13.7 | T69, T71 |
 | RF-14.1, RF-14.2 | T91, T92 |
-| RF-14.3 | T89 |
+| RF-14.3 | T89, T98, T100 |
 | RF-14.4 | T76 |
 | RF-15.1, RF-15.2 | T91, T92 |
-| RF-15.3 | T90 |
-| RF-15.4 | T70, T89 |
+| RF-15.3 | T90, T101 |
+| RF-15.4 | T70, T89, T99 |
 | RF-15.5 | T70, T91 |
 | RF-15.6 | T58 |
-| RF-15.7, RF-15.8 | T68, T81 |
+| RF-15.7, RF-15.8 | T68, T81, T101 |
+| RF-15.9 | T95, T97, T98, T99, T100 |
 | RF-16.1 | T10, T11, T12, T16, T18, T19, T20 |
 | RF-16.2 | T24, T25, T26, T27 |
 | RF-16.3 | T11, T21 |
@@ -291,7 +376,7 @@ Ninguna tarea de este listado deja RF sin cubrir. Los RF sin tarea propia son lo
 | RNF-4 | T85 |
 | RNF-5 | T58 |
 | RNF-6 | T54, T71, T88 |
-| RNF-7 | T76, T91 |
+| RNF-7 | T76, T91, T102 |
 | RNF-8 | T49, T61, T62 |
 
 ---
@@ -300,15 +385,15 @@ Ninguna tarea de este listado deja RF sin cubrir. Los RF sin tarea propia son lo
 
 **Grano.** Si una tarea se pasa de 30 minutos, se parte en dos con sufijos: `T22a` y `T22b`. Hay cuatro
 candidatas previsibles a partirse: **T22** (barrido de 100 celdas), **T55** (recalculate con las cuatro
-fixtures), **T81** (TurnForm completa) y **T86** (dos páginas de captura).
+fixtures), **T81** (TurnForm completa) y **T86** (dos p├íginas de captura).
 
-**Puerta de dominio.** **T57** no es una tarea más: cierra la mitad de desarrollo. Si el 100 % de
-`domain/` no se alcanza antes de empezar la fase 9, arrastrar el hueco hasta el final es mucho más caro que
-cerrarlo aquí.
+**Puerta de dominio.** **T57** no es una tarea m├ís: cierra la mitad de desarrollo. Si el 100 % de
+`domain/` no se alcanza antes de empezar la fase 9, arrastrar el hueco hasta el final es mucho m├ís caro que
+cerrarlo aqu├¡.
 
 **Tareas sin RF propio, y es correcto.** T01 a T05 son el andamiaje que hace posible cumplir III.1, y T84
-son estilos. El criterio 1 de `plan.md` §8 dice que eso se entrega en la primera tarea.
+son estilos. El criterio 1 de `plan.md` ┬º8 dice que eso se entrega en la primera tarea.
 
-**Al reabrir un hallazgo.** Si una revisión futura de `../../docs/reviews/001-qa.md` reabre algo, se añade
+**Al reabrir un hallazgo.** Si una revisi├│n futura de `../../docs/reviews/001-qa.md` reabre algo, se a├▒ade
 una tarea nueva al final de la fase correspondiente en vez de editar una ya cerrada. Una tarea marcada no se
 desmarca.

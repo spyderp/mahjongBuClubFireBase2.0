@@ -64,19 +64,28 @@ del reglamento de referencia y está registrada como tal en §4.7.
 
 ### Fin de mano
 
-- **Ganancia por *tsumo***: solo el dealer, o los cuatro si es *suufon renda*. Cada mano se paga con
-  los multiplicadores de §4.3, según si ese ganador es dealer o no. Los pagos de los cuatro ganadores
-  se acumulan: cada uno paga y cobra su propia mano, y no hay un descartador.
+- **Ganancia por *tsumo***: solo el dealer. Cada mano se paga con los multiplicadores de §4.3, según si
+  ese ganador es dealer o no, y no hay descartador.
 - **Ganancia por *ron***: hasta tres jugadores a la vez (*sanchan ron*). **El descartador paga la suma
   de los valores íntegros de cada mano ganadora**, sin repartir el pago entre los ganadores.
 - **Empate (*ryuukyoku*)**: 3000 puntos en total salen del jugador sin tenpai y se reparten a partes
   iguales entre los tenpai. No cambia si ese jugador es el dealer o no: si solo falta él, paga los
   3000 completos. **Las fichas de riichi no se adjudican** y permanecen en el bote.
 
+> **El *suufon renta* —cuatro ganadores por tsumo en la misma mano— queda fuera de lo capturado**, por
+> decisión del club. La captura se rechaza. `domain/turn.ts` conserva la capacidad de resolverlo y su
+> test sigue pasándose; lo que desaparece es el camino para llegar a ella desde la interfaz. Deroga 001
+> RF-6.5 y la versión anterior de esta sección. No afecta a *tenhou* ni a *chiihou*: un dealer puede
+> completar su mano en la primera mano sin que la completen los otros tres. La decisión está argumentada
+> en [`../specs/002/spec.md`](../specs/002/spec.md) §4 y RF-21.5.
+
 ### Fichas de riichi
 
-- Declarar riichi resta **1000** al declarante y suma **1000** al bote de mesa. El pago no va a ningún
-  jugador, por lo que no forma parte de los cuatro deltas del turno.
+- Declarar riichi resta **1000** al declarante y suma **1000** al bote de mesa. El pago **sí entra
+  en los deltas del turno**, como −1000 del declarante: es lo que hace que la suma cuadre a cero
+  salvoDeclaraciones y chombos, según RF-4.1. Si ese mismo turno se lleva el bote, el +1000 vuelve
+  dentro del cobro del ganador y las dos partes se cancelan. Lo que no ocurre es que el pago vaya a
+  **otro** jugador: si el bote no se reclama, esos 1000 quedan en la mesa y no los recibe nadie.
 - Quien gana la mano se lleva **todo** el bote como un único monto. En un **ron múltiple** se lo lleva
   el ganador cuya mano vale más, con el asiento de menor número como desempate si dos valen lo mismo.
 - El empate y la prolongación no adjudican el bote: sigue disponible para el turno siguiente.

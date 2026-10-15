@@ -552,6 +552,10 @@ Al finalizar, el sistema debe producir un resultado único y completo.
   hecho*.
 - **RF-15.8** El sistema *debe conservar un borrador del turno en curso*, de modo que *cerrar la
   aplicación a mitad de una captura no la pierda*.
+- **RF-15.9** El sistema *debe autenticar mediante Firebase Authentication con correo y contraseña*, y
+  *no debe registrar cuentas ni gestionar credenciales*: quién tiene cuenta se concede fuera del
+  sistema, como en la nota de §2. Un intento con credenciales incorrectas *debe rechazarse con un único
+  mensaje*, que no revele si la cuenta existe.
 
 > **Por qué:** el club es una comunidad pequeña y de confianza, sin estructura jerárquica. Un único
 > perfil con sesión iniciada es más sencillo de usar y suficiente; la decisión de quién tiene cuenta
@@ -795,17 +799,39 @@ La especificación se considera cumplida cuando **todas** estas condiciones se c
 19. La sesión iniciada se mantiene entre visitas.
 20. El formulario de captura se conserva al pedir la sesión y al cerrar la aplicación, y se restaura
     al volver.
+21. Se puede iniciar sesión con credenciales válidas, se rechazan las incorrectas con un único mensaje
+    que no revela si la cuenta existe, y la sesión se mantiene entre visitas.
 
 ### Sobre el documento
 
-21. Todas las dudas que estaban marcadas como `[NECESITA ACLARACIÓN]` están resueltas y registradas en
+22. Todas las dudas que estaban marcadas como `[NECESITA ACLARACIÓN]` están resueltas y registradas en
     §9, y ninguna vuelve a abrirse sin decisión nueva.
-22. Cada regla de puntuación aplicada —punto de partida, punto de retorno, uma, valor de mano,
+23. Cada regla de puntuación aplicada —punto de partida, punto de retorno, uma, valor de mano,
     redondeo, reparto de fichas de riichi, múltiple ron, suufon renta, chombo, bancarrota y
     desempate— está documentada en `docs/domain.md` con un ejemplo numérico que un jugador del club
     pueda comprobar a mano.
-23. Cada desviación respecto del reglamento de referencia está escrita, es implementable y tiene su
+24. Cada desviación respecto del reglamento de referencia está escrita, es implementable y tiene su
     test.
+
+---
+
+## 8.1 Derogaciones posteriores
+
+Esta especificación se da por cerrada, pero tres de sus requisitos han sido **derogados** por
+[`../002/spec.md`](../002/spec.md). Se registran aquí para que nadie implemente 001 a la letra creyendo que
+sigue vigente cuando ya no lo está, y para que quede constancia de qué lo sustituye.
+
+Ninguna tarea marcada de este documento se desmarca: una derogación no reabre 001, cambia lo que 001
+exige.
+
+| RF derogado | Qué exigía | Qué lo sustituye | Por qué |
+| ----------- | ---------- | ----------------- | ------- |
+| **RF-3.13** | Que un turno con resultado de mano **exigiera** el número de han de yaku, el contador de honba y el asiento de la localía como datos de entrada | Que el sistema **los calcule** y los muestre: RF-18.1 y RF-22 de 002 | El catálogo ya declara el han de cada yaku y `nextHand()` ya sabe calcular la localía, y ninguno de los dos se usaba. Pedirlos a mano convertía el motor en adorno |
+| **RF-4.3** | Que se rechazara un turno registrado con `yakuHan` en cero | Que se rechace cuando **no se ha seleccionado ningún yaku real**, aunque el ajuste manual eleve los han: RF-22.8 | Con el han derivado, `yakuHan == 0` y «no hay yaku» dejan de ser lo mismo en cuanto existe un ajuste manual |
+| **RF-6.5** | Que se pudiera registrar un `suufon renta`, es decir cuatro ganadores por tsumo | **Queda vetado.** La captura de cuatro ganadores por tsumo se rechaza: RF-21.5 de 002 | Decisión del club. El motor conserva la capacidad y su test sigue pasando; lo que desaparece es el camino para llegar a ella |
+
+Las tres decisiones están argumentadas en [`../002/spec.md`](../002/spec.md) §4, con su alternativa
+descartada, y su traza en [`../../docs/reviews/002-qa.md`](../../docs/reviews/002-qa.md).
 
 ---
 
@@ -842,6 +868,7 @@ Ninguna vuelve a abrirse sin una decisión nueva y explícita.
 | 24 | Cómo se reconoce a un invitado entre partidas | **Por el identificador que aporta el club** | Su formato se valida, porque un identificador mal escrito parte el historial |
 | 25 | Cuál es la regla de ese identificador | **El club lo mantiene fuera del sistema** | El sistema solo comprueba su formato |
 | 26 | Cuáles son los formatos válidos de un identificador | **Código de 2 a 12 alfanuméricos, o alias de 2 a 32 con guion y guion bajo en el interior** | Se cerraron al implementar `domain/types.ts`: sin ellos, RF-1.9 exigía validar un formato que nadie había definido. La normalización a minúsculas es lo que impide que un mismo identificador tecleado con otra caja cree un jugador nuevo |
+| 27 | Cómo se obtiene la sesión que exigen RF-15.1 y RF-15.2 | **Con correo y contraseña mediante Firebase Authentication (RF-15.9)**, sin registro en la aplicación | Se separan **autenticación** (dentro, RF-15.9) de **gestión de cuentas** (fuera, §2 y §7). El mensaje de credenciales incorrectas es único: quien no tiene cuenta recibe el mismo texto que quien teclea mal, así que el club tiene que comunicar el alta de cuentas por fuera |
 
 ---
 
@@ -863,9 +890,11 @@ Se hacen notar cinco decisiones ya tomadas que condicionarán ese plan:
    la temporada cerrada, y ese registro de operación debe conservarse.
 4. **La temporada se deduce de la fecha de la partida**, así que `seasonId` tiene que admitir nulo y
    no lo elige el capturador. Por eso el solapamiento de temporadas se rechaza.
-5. **La gestión de cuentas no pertenece al sistema**: la aplicación solo comprueba si hay una sesión
-   iniciada. En consecuencia, `firestore.rules` **no puede** distinguir quién borra, y la anterior
-   restricción por claim `admin` queda derogada.
+5. **La gestión de cuentas no pertenece al sistema**, pero **la autenticación sí**: RF-15.9 mete la
+   autenticación con correo y contraseña dentro de la aplicación, mientras que el alta de cuentas, las
+   invitaciones y el roster siguen resolviéndose fuera del sistema, como en §2 y en §7. En
+   consecuencia, `firestore.rules` **no puede** distinguir quién borra, y la anterior restricción por
+   claim `admin` queda derogada.
 
 Además, RNF-3 exige versionar las reglas aplicadas. Una partida guardada debe poder responder con qué
 versión de las constantes se calculó, de modo que cambiar la tabla de puntuaciones en el futuro no

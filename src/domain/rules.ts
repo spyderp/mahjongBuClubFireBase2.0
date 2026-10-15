@@ -59,6 +59,15 @@ export function nextHand(state: HandState, outcome: HandOutcome): HandState {
 }
 
 /**
+ * RF-18.2: la partida arranca en la ronda del Este, con el Este de localía y honba 0. El primer
+ * dealer es quien ocupa el asiento Este, que es la única forma de que el estado inicial no dependa
+ * del orden en que se listaron los jugadores.
+ */
+export function initialHandState(): HandState {
+  return { wind: 'east', dealer: 'east', honba: 0 }
+}
+
+/**
  * Prórroga (_sudden death_): solo se añade una mano extra si al cerrar la última ronda
  * prevista el líder no ha alcanzado el punto de retorno (RF-9.1, `docs/domain.md` §2).
  */

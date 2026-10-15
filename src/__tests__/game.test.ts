@@ -50,6 +50,7 @@ function table(
 function base(overrides?: Partial<TurnBase>): TurnBase {
   return {
     players: overrides?.players ?? table(),
+    dealerId: overrides?.dealerId ?? A,
     honba: overrides?.honba ?? 0,
     riichiDeclaredBy: overrides?.riichiDeclaredBy ?? [],
     riichiSticksBefore: overrides?.riichiSticksBefore ?? 0,

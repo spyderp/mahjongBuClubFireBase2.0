@@ -27,6 +27,13 @@ export type TurnWinnerInput = {
 
 export type TurnBase = {
   readonly players: readonly TurnPlayer[]
+  /**
+   * RF-18.1: el dealer de este turno. **No** es quien ocupa el asiento Este: la localía avanza
+   * con la partida y el motor tiene que saber quién la ocupa en cada turno. Antes se deducía del
+   * asiento, lo que hacía que a partir del segundo turno los pagos se calcularan contra el
+   * dealer equivocado sin que nada lo detectara.
+   */
+  readonly dealerId: PlayerId
   readonly honba: number
   readonly riichiDeclaredBy: readonly PlayerId[]
   readonly riichiSticksBefore: number
@@ -73,7 +80,12 @@ export type TurnResult =
 export type SquareCheckInput = {
   readonly deltas: readonly PlayerDelta[]
   readonly riichiDeclared: number
-  readonly riichiClaimed: number
+  /**
+   * Fichas **reclamadas en este turno**, incluida la que se declara en él: si el bote se
+   * adjudica, es `riichiSticksBefore + riichiDeclaredBy.length`; si no, 0. Pasar solo el bote
+   * previo da un fallo falso: la ficha recién declarada sí sale de la mesa y vuelve al ganador.
+   */
+  readonly riichiSticksClaimedThisTurn: number
   readonly chombos: number
 }
 
@@ -143,14 +155,15 @@ export function resolveTurn(input: TurnInput): TurnResult {
 }
 
 /**
- * Invariante de cuadre (RF-4.1): la suma de los deltas de un turno no es cero porque las
- * fichas de riichi declaradas salen del marcador sin entrar en nadie y los 8000 del chombo
- * se destruyen. El bote que se reclama sí es neutro: por eso se descuenta de lo declarado.
+ * Invariante de cuadre (RF-4.1): la suma de los deltas de un turno no es cero porque las fichas
+ * de riichi declaradas salen del marcador sin entrar en nadie y los 8000 del chombo se destruyen.
+ * El bote que se reclama sí es neutro, y por eso se resta de lo declarado: cuenta las fichas
+ * **de este turno**, incluida la que se declara en él, no solo las que ya había en la mesa.
  */
 export function checkSquare(input: SquareCheckInput): SquareCheckResult {
   const actual = input.deltas.reduce((total, entry) => total + entry.delta, 0)
   const expected =
-    -RIICHI_STICK_VALUE * (input.riichiDeclared - input.riichiClaimed) -
+    -RIICHI_STICK_VALUE * (input.riichiDeclared - input.riichiSticksClaimedThisTurn) -
     CHOMBO_PENALTY * input.chombos
 
   return actual === expected ? { ok: true } : { ok: false, expected, actual }
@@ -171,7 +184,7 @@ function winsOf(input: TurnInput, players: readonly TurnPlayer[], honba: number)
     const winner = input.winners.find((candidate) => candidate.playerId === player.playerId)
 
     if (winner !== undefined) {
-      wins.push(toWin(player, winner.hand, honba, input.resultType))
+      wins.push(toWin(player, winner.hand, honba, input.resultType, input.dealerId))
     }
   }
 
@@ -183,9 +196,10 @@ function toWin(
   handInput: HandValueInput,
   honba: number,
   resultType: 'tsumo' | 'ron',
+  dealerId: PlayerId,
 ): Win {
   const hand = computeHandValue(handInput)
-  const winnerIsDealer = player.seat === 'east'
+  const winnerIsDealer = player.playerId === dealerId
   const base = { playerId: player.playerId, seat: player.seat, hand }
 
   if (resultType === 'ron') {
@@ -268,7 +282,7 @@ function deltaFromWin(winning: Win, player: TurnPlayer, input: TurnInput, pot: n
     return player.playerId === input.discarderId ? -winning.points : 0
   }
 
-  return -(player.seat === 'east' ? winning.dealerShare : winning.nonDealerShare)
+  return -(player.playerId === input.dealerId ? winning.dealerShare : winning.nonDealerShare)
 }
 
 /** Penalizaciones o reparto de tenpai que no nacen de ninguna mano ganadora. */

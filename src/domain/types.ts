@@ -22,6 +22,13 @@ export type Player = {
   readonly externalId: string
   readonly name: string
   readonly active: boolean
+  /**
+   * RF-1.3: un invitado creado al capturar un identificador que no estaba en el club. Vive en la
+   * misma colección, con el mismo `externalId` normalizado que un jugador del club: por eso un
+   * invitado que vuelve acumula sus estadísticas (RF-1.4) y por eso promoverlo conserva todo su
+   * historial sin migrar nada (RF-1.5).
+   */
+  readonly guest: boolean
   readonly createdAt: Timestamp
   readonly updatedAt: Timestamp
 }
