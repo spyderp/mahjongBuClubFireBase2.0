@@ -87,8 +87,8 @@ Ninguna cubre RF: es lo que hace posible cumplir constitution III.1.
 - [x] **T30** Declaración de riichi · **Cubre:** RF-5.1, RF-5.2 · **Hecho cuando:** declarar riichi resta 1000 al declarante, sube el bote a 1000 y ningún `delta` de jugador recibe ese 1000.
 - [x] **T31** Reclamación del bote · **Cubre:** RF-5.3, RF-5.5 · **Hecho cuando:** al ganar por tsumo o ron el ganador recibe el bote entero en un único `delta`, y en empate el bote no se mueve.
 - [x] **T32** Bote en ron múltiple · **Cubre:** RF-5.4 · **Hecho cuando:** con dos ganadores de manos distintas el bote entero va al de mayor valor, y con manos iguales va al de menor asiento.
-- [x] **T33** Chombo · **Cubre:** RF-7.2, RF-7.3 · **Hecho cuando:** el chombo asigna −8000 al que abandona, ningún otro delta lo compensa y `turn.test.ts` documenta que la partida no se interrumpe.
-- [x] **T34** Invariante de cuadre · **Cubre:** RF-4.1 · **Hecho cuando:** el `describe('invariante de cuadre')` barre `resultType` × localía × número de ganancia × riichi × chombo y comprueba `Σ deltas = −(1000 × riichi) − (8000 × chombos)` en todas.
+- [x] **T33** Chombo · **Cubre:** RF-7.2, RF-7.3 · **Hecho cuando:** el chombo asigna −8000 al que abandona, ningún otro delta lo compensa y `turn.test.ts` documenta que la partida no se interrumpe. — **SUPERADO** por la corrección del chombo, ver §5.2 de `plan.md`
+- [x] **T34** Invariante de cuadre · **Cubre:** RF-4.1 · **Hecho cuando:** el `describe('invariante de cuadre')` barre `resultType` × localía × número de ganancia × riichi × chombo y comprueba `Σ deltas = −(1000 × riichi) − (8000 × chombos)` en todas. — **SUPERADO**: la fórmula ya no tiene término de chombo
 - [x] **T35** Detección de bancarrota · **Cubre:** RF-4.7, RF-8.8 · **Hecho cuando:** un turno que deja a alguien bajo cero se aplica íntegro y devuelve `bankrupt: true` con el saldo negativo resultante.
 
 ---
@@ -110,7 +110,7 @@ Ninguna cubre RF: es lo que hace posible cumplir constitution III.1.
 - [x] **T43** Transiciones y estados terminales · **Cubre:** RF-0.2, RF-0.3 · **Hecho cuando:** `unfinished` y `aborted` no tienen transición de salida, y una partida en cualquiera de los dos conserva sus turnos y no computa.
 - [x] **T44** Cierre obligatorio por bancarrota · **Cubre:** RF-0.4 · **Hecho cuando:** con `mustFinalize` activo la única transición permitida es finalizar, y registrar un turno nuevo se rechaza.
 - [x] **T45** Regla de los 7 días · **Cubre:** RF-10.4, RF-10.5 · **Hecho cuando:** `game.test.ts` comprueba que a 6 días no se ofrece abandonar y a 8 días sí, y que `updatedAt` se lee en días naturales.
-- [x] **T46** Resultado final con chombo y bancarrota · **Cubre:** RF-7.4, RF-7.5, RF-8.8 · **Hecho cuando:** `game.test.ts` comprueba que una partida con un chombo suma 92 000, se finaliza y computa, y que `results[]` marca `chombo` y `bankrupt`.
+- [x] **T46** Resultado final con chombo y bancarrota · **Cubre:** RF-7.4, RF-7.5, RF-8.8 · **Hecho cuando:** `game.test.ts` comprueba que una partida con un chombo suma 92 000, se finaliza y computa, y que `results[]` marca `chombo` y `bankrupt`. — **SUPERADO**: la partida con chombo vuelve a sumar 100 000, y `results[]` marca `chombo` leyendo `chomboId`
 
 ---
 

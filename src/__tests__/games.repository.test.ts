@@ -1,12 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { doc, getDoc } from 'firebase/firestore'
+import { getDb } from '@/app/firebase'
 import { gamesRepository } from '@/data/games.repository'
 import type { CreateGameInput, GameAuditEntry, GameResultDoc } from '@/data/games.repository'
 import { DataError } from '@/data/errors'
+import type { TurnDeleteEntry, TurnSnapshot } from '@/data/turns.repository'
 import { toGameId, toPlayerId, toSeasonId } from '@/domain/types'
 import type { GameId, Seat } from '@/domain/types'
-import { fakeAdvanceSeconds, fakeNow, fakeReset } from '@/test-utils/fakeFirestore'
+import { fakeAdvanceSeconds, fakeGetDb, fakeNow, fakeReset } from '@/test-utils/fakeFirestore'
 
 vi.mock('firebase/firestore', () => import('@/test-utils/fakeFirestore'))
 vi.mock('@/app/firebase', async () => {
@@ -42,6 +45,30 @@ const RESULT: GameResultDoc = {
   bankrupt: false,
 }
 
+/** Los valores que tenía un turno, que es lo que queda de él cuando se borra (RF-19.6). */
+const TURN_BEFORE: TurnSnapshot = {
+  turnNo: 1,
+  wind: 'east',
+  dealerId: toPlayerId('p1'),
+  honba: 2,
+  resultType: 'chombo',
+  yaku: [],
+  yakuHan: 0,
+  yakuHanOverride: 0,
+  doraCount: 0,
+  fu: 0,
+  tenpai: [],
+  riichiDeclaredBy: [],
+  riichiSticks: 0,
+  value: [],
+  deltas: [{ playerId: toPlayerId('p4'), delta: -8000 }],
+  discarderId: null,
+  chomboId: toPlayerId('p4'),
+  capturedBy: 'user-1',
+  isRenchan: false,
+  isFinalTurn: false,
+}
+
 async function openGame(overrides?: Partial<CreateGameInput>) {
   return gamesRepository.create({
     seasonId: overrides?.seasonId ?? null,
@@ -60,6 +87,27 @@ async function finalizedGame(gameId: GameId) {
     results: [RESULT],
     finalizationAudit: [audit('finalize')],
   })
+}
+
+function gamePath(gameId: string): string {
+  return `games/${gameId}`
+}
+
+async function gameField(gameId: string, field: string): Promise<unknown> {
+  const snapshot = await getDoc(doc(getDb(), 'games', gameId))
+
+  return snapshot.data()?.[field]
+}
+
+/** Una entrada de `turnAudit[]`: el registro de un borrado sin turno anterior (RF-19.7). */
+function deletion(turnNo: number): TurnDeleteEntry {
+  return {
+    at: fakeNow(),
+    by: 'user-2',
+    action: 'delete',
+    turnNo,
+    before: { ...TURN_BEFORE, turnNo },
+  }
 }
 
 describe('T62 · games.repository', () => {
@@ -196,5 +244,74 @@ describe('T62 · games.repository', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/data/games.repository.ts'), 'utf8')
 
     expect(source).toContain('games (status ASC, updatedAt DESC)')
+  })
+})
+
+/**
+ * T28 · RF-19.7: `games/{gameId}.turnAudit[]` es el único sitio donde puede sobrevivir el registro
+ * de un borrado de turno **sin turno anterior**, porque el propio borrado se lo lleva por delante
+ * si lived en el turno. No es un historial de revisiones de la partida —ese es `finalizationAudit[]`—,
+ * sino el destino de una entrada que no tiene otro hogar, y por eso no se mezcla con él.
+ */
+describe('T28 · turnAudit[] en el documento de la partida', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  it('create abre la partida con el registro de borrados vacío', async () => {
+    const created = await openGame()
+
+    expect(created.turnAudit).toEqual([])
+    expect((await gamesRepository.getById(created.id))?.turnAudit).toEqual([])
+    expect(await gameField(created.id, 'turnAudit')).toEqual([])
+  })
+
+  it('update escribe el registro de un borrado y lo devuelve', async () => {
+    const game = await openGame()
+
+    const updated = await gamesRepository.update(game.id, { turnAudit: [deletion(1)] })
+
+    expect(updated.turnAudit).toHaveLength(1)
+    expect(updated.turnAudit[0]).toStrictEqual(deletion(1))
+    expect((await gamesRepository.getById(game.id))?.turnAudit).toHaveLength(1)
+  })
+
+  it('el registro de la partida es de solo anexado: el llamante decide la lista entera', async () => {
+    const game = await openGame()
+
+    await gamesRepository.update(game.id, { turnAudit: [deletion(1)] })
+    const second = await gamesRepository.update(game.id, { turnAudit: [deletion(1), deletion(2)] })
+
+    expect(second.turnAudit.map((entry) => entry.turnNo)).toStrictEqual([1, 2])
+  })
+
+  it('un parche que no habla del registro no lo borra', async () => {
+    const game = await openGame()
+    await gamesRepository.update(game.id, { turnAudit: [deletion(1)] })
+
+    const updated = await gamesRepository.update(game.id, { startPoints: 30000 })
+
+    expect(updated.turnAudit).toHaveLength(1)
+  })
+
+  it('la entrada guarda los valores del turno borrado, no solo su número', async () => {
+    const game = await openGame()
+    const entry = deletion(3)
+
+    await gamesRepository.update(game.id, { turnAudit: [entry] })
+    const stored = await gamesRepository.getById(game.id)
+
+    expect(stored?.turnAudit[0]?.before).toStrictEqual(entry.before)
+    expect(stored?.turnAudit[0]?.before.resultType).toBe('chombo')
+    expect(stored?.turnAudit[0]?.before.honba).toBe(2)
+  })
+
+  it('una partida escrita sin el campo se lee con la lista vacía, no con undefined', async () => {
+    const game = await openGame()
+    const { turnAudit: _omitted, ...rest } = fakeGetDb().docs.get(gamePath(game.id)) ?? {}
+
+    fakeGetDb().docs.set(gamePath(game.id), rest)
+
+    expect((await gamesRepository.getById(game.id))?.turnAudit).toEqual([])
   })
 })

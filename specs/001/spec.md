@@ -270,11 +270,13 @@ Un dato falso en el historial es peor que un dato ausente, porque no se puede de
   cumple*:
 
   ```
-  Σ deltas = −(1000 × nº de riichi declarados) − (8000 × nº de chombos)
+  Σ deltas = −(1000 × nº de riichi declarados no reclamados)
   ```
 
   y *debe rechazarla explicando la discrepancia si no se cumple*. La suma **no** es cero por
-  construcción: ni las fichas de riichi ni el chombo van a ningún jugador.
+  construcción: las fichas de riichi **no reclamadas** salen del marcador sin entrar en nadie. El chombo
+  **no aparece** en la fórmula porque su penalización se reparte entre los demás jugadores: sale del
+  infractor y entra en los otros, y por eso es neutra en la suma.
 
 - **RF-4.2** Si *un turno se registra sin tipo de resultado*, el sistema *debe impedir que se
   guarde*.
@@ -349,20 +351,38 @@ Cuando varios jugadores ganan a la vez contra la misma mano.
 
 - **RF-7.1** El sistema *debe permitir registrar un abandono (chombo) de un jugador durante un
   turno*.
-- **RF-7.2** Si *se registra un chombo*, el sistema *debe asignar un delta de −8000 al jugador que
-  abandonó en ese mismo turno*, sin saldo a favor de ningún otro jugador.
-- **RF-7.3** Si *se registra un chombo*, el sistema ***no debe interrumpir la partida***: los turnos
+- **RF-7.2** Si *se registra un chombo* y *el infractor no ocupa el asiento de la localía*, el sistema
+  *debe asignar un delta de −8000 al jugador que abandonó en ese mismo turno* y *debe repartir esos 8000
+  puntos entre los demás*: 4000 al dealer y 2000 a cada uno de los otros dos jugadores que no son dealer.
+- **RF-7.3** Si *se registra un chombo* y *el infractor ocupa el asiento de la localía*, el sistema *debe
+  asignar un delta de −12000 al dealer que abandonó* y *debe repartir esos 12000 puntos*: 4000 a cada uno
+  de los tres rivales.
+- **RF-7.4** Si *se registra un chombo*, el sistema ***no debe interrumpir la partida***: los turnos
   siguientes se siguen capturando con normalidad.
-- **RF-7.4** Si *una partida contiene un chombo*, el sistema *debe calcularla y finalizarla con
+- **RF-7.5** Si *una partida contiene un chombo*, el sistema *debe calcularla y finalizarla con
   normalidad*, y *debe registrar el abandono en `results[].chombo` y en las estadísticas de chombo del
   jugador*.
-- **RF-7.5** Si *una partida contiene un chombo*, el sistema *debe documentar que su suma de
-  marcadores es 92 000 y no 100 000*.
+- **RF-7.6** Si *se registra un chombo*, el sistema ***no debe hacer avanzar la localía ni alterar el
+  contador de honba***: la mano se vuelve a repartir desde el estado en que estaba y el contador queda
+  como estaba. El chombo **no es renchan** — el contador solo sube cuando el dealer conserva la localía
+  (**RF-18.3** y **RF-18.4** de `../002/spec.md`) —.
+- **RF-7.7** Si *un turno contiene un chombo*, el sistema *debe marcar como chombo **únicamente** al
+  jugador que lo provocó*, nunca a los que cobran la penalización: la marca se lee del infractor del
+  turno, no de quién aparece entre sus deltas.
+- **RF-7.8** Si *una partida contiene un chombo*, el sistema *debe documentar que su suma de marcadores
+  es 100 000 y no se ve afectada por el chombo*.
 
 > **Por qué:** el chombo es la única sanción del reglamento y no consiste en puntos de la mano, sino
-> en una penalización directa. Se aplica sobre el turno en el que ocurre para que la traza turno a
-> turno muestre el castigo, y **no** interrumpe la partida: interrumpirla perdería los resultados de
-> una partida que se ha jugado entera.
+> en una penalización directa que **se reparte** entre los demás jugadores. El importe depende de si el
+> infractor es el dealer, porque en el reglamento de referencia el castigo de la localía es el doble. Se
+> aplica sobre el turno en el que ocurre para que la traza turno a turno muestre el castigo, y **no**
+> interrumpe la partida: interrumpirla perdería los resultados de una partida que se ha jugado entera.
+> Tampoco hace avanzar la localía ni tocar el contador, porque no es una mano jugada: la siguiente mano
+> se reparte desde el mismo estado.
+>
+> **Estos requisitos cambiaron por decisión del club** y corrigieron el −8000 plano y el avance de la
+> localía que sí implantó 001. Ver `docs/reviews/001-qa.md` (B8, C11) y `docs/domain.md` §4.5
+> desviación 5.
 
 ---
 
@@ -666,8 +686,8 @@ Al finalizar, el sistema debe producir un resultado único y completo.
 22. **Empate en la puntuación acumulada de la temporada.** Se aplica el criterio declarado: victorias,
     luego veces en segunda, luego alfabético.
 23. **Fichas de riichi sin reclamar en una partida inconclusa.** Quedan registradas y se pierden.
-24. **Chombo a mitad de la partida.** La partida **no** se interrumpe: se restan 8000 en ese turno y
-    se sigue jugando.
+24. **Chombo a mitad de la partida.** La partida **no** se interrumpe: se reparten 8000 en ese turno y
+    se sigue jugando, sin cambiar la localía ni el contador.
 25. **Chombo que lleva a un jugador por debajo de cero.** La partida termina, se finaliza con el
     saldo negativo y computa en el ranking.
 26. **Alguien alcanza 30 000 puntos.** Se advierte y se puede seguir capturando.
@@ -712,6 +732,12 @@ Al finalizar, el sistema debe producir un resultado único y completo.
     que se pueda recuperar.
 49. **Captura sin cobertura durante toda una partida.** Todos los turnos se guardan en local y se
     sincronizan al recuperar la conexión.
+50. **Chombo del dealer.** Se reparten 12000: el dealer paga 4000 a cada uno de los tres rivales, que
+    sí los reciben.
+51. **Chombo con la penalización repartida.** Solo el infractor cuenta como chombo en
+    `results[].chombo` y en `yakuStats.chombo`; los tres que cobran la penalización no.
+52. **Chombo con honba activo.** El contador queda como estaba y la localía no avanza, así que la mano
+    siguiente se vuelve a repartir con el mismo dealer y el mismo número de honba.
 
 ---
 
@@ -847,7 +873,7 @@ Ninguna vuelve a abrirse sin una decisión nueva y explícita.
 | 3 | Si los 30 000 puntos cierran la partida | **No: avisan y se puede seguir** | Desviación declarada del reglamento de referencia |
 | 4 | Si el MVP incluye gráficas | **Sí**, con tres visualizaciones alimentadas por las mismas cifras que las tablas | chart.js queda legitimado en el stack |
 | 5 | Si un jugador puede estar en dos partidas abiertas | **Sí**, con el supuesto de trabajo confirmado | Si ambas se finalizan, cuentan como dos |
-| 6 | Si el chombo interrumpe la partida | **No**, es una penalización de 8000 en el turno | La partida computa y su suma es 92 000 |
+| 6 | Si el chombo interrumpe la partida | **No**, es una penalización repartida en el turno | La partida computa y su suma sigue siendo 100 000 |
 | 7 | Qué pasa si el chombo deja a alguien bajo cero | **La partida termina** | El turno se aplica íntegro y el negativo es la puntuación final |
 | 8 | En qué estado termina una bancarrota | **`finalizada`**, computando en el ranking | No hay estado nuevo para la bancarrota |
 | 9 | Si `abortada` es recuperable | **No, es terminal** | Un clic accidental en finalizar es irreversible; por eso hay confirmación |
@@ -855,7 +881,7 @@ Ninguna vuelve a abrirse sin una decisión nueva y explícita.
 | 11 | El desempate en la clasificación | **Victorias, luego veces en segunda, luego alfabético** | Es el mismo en todas las temporadas |
 | 12 | Cuánto es un periodo prolongado | **7 días**, una reunión semanal | Avisa al retomar y ofrece abandonar |
 | 13 | A qué temporada pertenece una partida | **Por fecha, sin elección del capturador** | Por eso el solapamiento de temporadas se prohíbe |
-| 14 | El chombo y el invariante de suma del turno | **La suma es cero salvo chombo** y riichi declarado | La fórmula exacta está en RF-4.1 |
+| 14 | El chombo y el invariante de suma del turno | **La suma es cero salvo riichi declarado y no reclamado**; el chombo se reparte y es neutro | La fórmula exacta está en RF-4.1 |
 | 15 | Si el sistema comprueba yaku imposibles | **Solo los verificables**: yaku de viento, chiitoitsu contra fu, combinaciones no representables y ausencia de yaku real | Se declara que la cobertura es parcial |
 | 16 | Kiriage mangan | **No se aplica** | 4 han 30 fu y 3 han 60 fu valen 7700 y 11 600 |
 | 17 | Cómo puntúa un chiitoitsu por tsumo | **Como 3 han 25 fu**, con menzen tsumo | Se rellenan las celdas de tsumo de 25 fu |
@@ -869,6 +895,9 @@ Ninguna vuelve a abrirse sin una decisión nueva y explícita.
 | 25 | Cuál es la regla de ese identificador | **El club lo mantiene fuera del sistema** | El sistema solo comprueba su formato |
 | 26 | Cuáles son los formatos válidos de un identificador | **Código de 2 a 12 alfanuméricos, o alias de 2 a 32 con guion y guion bajo en el interior** | Se cerraron al implementar `domain/types.ts`: sin ellos, RF-1.9 exigía validar un formato que nadie había definido. La normalización a minúsculas es lo que impide que un mismo identificador tecleado con otra caja cree un jugador nuevo |
 | 27 | Cómo se obtiene la sesión que exigen RF-15.1 y RF-15.2 | **Con correo y contraseña mediante Firebase Authentication (RF-15.9)**, sin registro en la aplicación | Se separan **autenticación** (dentro, RF-15.9) de **gestión de cuentas** (fuera, §2 y §7). El mensaje de credenciales incorrectas es único: quien no tiene cuenta recibe el mismo texto que quien teclea mal, así que el club tiene que comunicar el alta de cuentas por fuera |
+| 28 | A quién paga el chombo | **Al resto de la mesa, no a nadie**: 4000 al dealer y 2000 a cada no-dealer si el infractor no es el dealer, y 4000 a cada rival si lo es | La penalización se conserva como suma: 8000 y 12000. Esto **revierte** la decisión 3 de `plan.md`, que lo daba por destruido |
+| 29 | Si el chombo mueve la localía o el honba | **No, a ninguno de los dos** | El chombo no es una mano jugada. Sin esta decisión, `RF-18.3` y `RF-18.4` obligarían a subir el contador y a avanzar la localía |
+| 30 | Chombo en reglamento de torneo M.League | **Fuera de alcance**: se penaliza al final de la partida y la mano cuenta como empate | `ruleset: 'mleague'` no admite captura (§7), así que la variante no es alcanzable. Declarado, no implementado |
 
 ---
 

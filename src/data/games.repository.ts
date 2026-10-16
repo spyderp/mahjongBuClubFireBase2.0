@@ -13,6 +13,7 @@ import type { QueryDocumentSnapshot, WriteBatch } from 'firebase/firestore'
 import { getDb } from '@/app/firebase'
 import { withBatch } from '@/data/batch'
 import { DataError } from '@/data/errors'
+import type { TurnSnapshot } from '@/data/turns.repository'
 import type { Game, GameId, GameLength, GameStatus, Position } from '@/domain/types'
 import type { PlayerId, Ruleset, SeasonId, Seat } from '@/domain/types'
 import type { Timestamp as DomainTimestamp } from '@/domain/types'
@@ -40,10 +41,24 @@ export type GameAuditEntry = {
   readonly reason?: string
 }
 
+/**
+ * RF-19.7: el registro de un borrado de turno **sin turno anterior**. Solo estos borrados llegan
+ * aquí, porque los demás tienen sitio en el registro del turno previo y este es el único lugar
+ * donde la entrada sobrevive al turno que la originó.
+ */
+export type TurnDeleteEntry = {
+  readonly at: DomainTimestamp
+  readonly by: string
+  readonly action: 'delete'
+  readonly turnNo: number
+  readonly before: TurnSnapshot
+}
+
 export type GameRecord = { readonly id: GameId } & Game & {
     readonly players: readonly GameParticipant[]
     readonly results: readonly GameResultDoc[]
     readonly finalizationAudit: readonly GameAuditEntry[]
+    readonly turnAudit: readonly TurnDeleteEntry[]
   }
 
 export type CreateGameInput = {
@@ -68,6 +83,7 @@ export type UpdateGamePatch = {
   readonly players?: readonly GameParticipant[]
   readonly results?: readonly GameResultDoc[]
   readonly finalizationAudit?: readonly GameAuditEntry[]
+  readonly turnAudit?: readonly TurnDeleteEntry[]
 }
 
 type GameData = {
@@ -82,6 +98,8 @@ type GameData = {
   readonly players: readonly GameParticipant[]
   readonly results: readonly GameResultDoc[]
   readonly finalizationAudit: readonly GameAuditEntry[]
+  /** Opcional porque las partidas anteriores a `specs/002` no lo tienen. */
+  readonly turnAudit?: readonly TurnDeleteEntry[]
   readonly createdAt: DomainTimestamp
   readonly updatedAt: DomainTimestamp
 }
@@ -143,6 +161,7 @@ export const gamesRepository = {
         players: input.players,
         results: [],
         finalizationAudit: [],
+        turnAudit: [],
       }
 
       current.set(ref, { ...fields, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
@@ -219,6 +238,7 @@ function toRecordFrom(id: string, data: GameData): GameRecord {
     players: data.players,
     results: data.results,
     finalizationAudit: data.finalizationAudit,
+    turnAudit: data.turnAudit ?? [],
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
@@ -240,6 +260,7 @@ function mergePatch(
     players: patch.players ?? current.players,
     results: patch.results ?? current.results,
     finalizationAudit: patch.finalizationAudit ?? current.finalizationAudit,
+    turnAudit: patch.turnAudit ?? current.turnAudit ?? [],
   }
 }
 

@@ -30,7 +30,7 @@ describe('T07 · estado inicial de la partida', () => {
     expect(nextHand(initialHandState(), { type: 'otherDraw' })).toStrictEqual({
       wind: 'east',
       dealer: 'south',
-      honba: 1,
+      honba: 0,
     })
   })
 })
@@ -57,11 +57,11 @@ describe('T36 · mínimo de turnos por modo', () => {
 })
 
 describe('T37 · localía y honba por turno', () => {
-  it('la localía avanza por asiento cuando el dealer no gana y el honba sube', () => {
-    expect(nextHand(hand('east'), { type: 'otherWin' })).toStrictEqual({
+  it('la localía avanza por asiento cuando el dealer no gana y el honba vuelve a cero', () => {
+    expect(nextHand(hand('east', { honba: 3 }), { type: 'otherWin' })).toStrictEqual({
       wind: 'east',
       dealer: 'south',
-      honba: 1,
+      honba: 0,
     })
   })
 
@@ -71,30 +71,53 @@ describe('T37 · localía y honba por turno', () => {
     const fourth = nextHand(third, { type: 'otherWin' })
     const fifth = nextHand(fourth, { type: 'otherWin' })
 
-    expect(second).toStrictEqual({ wind: 'east', dealer: 'south', honba: 1 })
-    expect(third).toStrictEqual({ wind: 'east', dealer: 'west', honba: 2 })
-    expect(fourth).toStrictEqual({ wind: 'east', dealer: 'north', honba: 3 })
-    expect(fifth).toStrictEqual({ wind: 'south', dealer: 'east', honba: 4 })
+    expect(second).toStrictEqual({ wind: 'east', dealer: 'south', honba: 0 })
+    expect(third).toStrictEqual({ wind: 'east', dealer: 'west', honba: 0 })
+    expect(fourth).toStrictEqual({ wind: 'east', dealer: 'north', honba: 0 })
+    expect(fifth).toStrictEqual({ wind: 'south', dealer: 'east', honba: 0 })
   })
 
-  it('el honba vuelve a cero cuando el dealer gana', () => {
+  it('el honba sube cuando el dealer gana y mantiene la localía', () => {
     const first: HandState = { wind: 'south', dealer: 'east', honba: 3 }
 
     expect(nextHand(first, { type: 'dealerWin' })).toStrictEqual({
       wind: 'south',
       dealer: 'east',
-      honba: 0,
+      honba: 4,
     })
   })
 
-  it('el honba se incrementa cuando el dealer no gana, con la localía de oeste a norte', () => {
+  it('el honba vuelve a cero cuando el dealer no conserva la tenpai', () => {
     const first: HandState = { wind: 'west', dealer: 'north', honba: 2 }
 
     expect(nextHand(first, { type: 'otherDraw' })).toStrictEqual({
       wind: 'north',
       dealer: 'east',
-      honba: 3,
+      honba: 0,
     })
+  })
+
+  it('cinco renchan seguidos acumulan cinco contadores, que es la desviación 8', () => {
+    let state: HandState = { wind: 'east', dealer: 'east', honba: 0 }
+
+    for (let handNo = 1; handNo <= 5; handNo += 1) {
+      state = nextHand(state, { type: 'dealerWin' })
+      expect(state).toStrictEqual({ wind: 'east', dealer: 'east', honba: handNo })
+    }
+  })
+
+  it('el chombo conserva la localía y el viento y deja el contador como estaba', () => {
+    const first: HandState = { wind: 'south', dealer: 'west', honba: 2 }
+
+    expect(nextHand(first, { type: 'chombo' })).toStrictEqual({
+      wind: 'south',
+      dealer: 'west',
+      honba: 2,
+    })
+  })
+
+  it('el chombo no es renchan, aunque conserve la localía', () => {
+    expect(isRenchan({ type: 'chombo' })).toBe(false)
   })
 
   it('solo hay renchan cuando el dealer gana o el draw le deja con tenpai', () => {
@@ -103,6 +126,7 @@ describe('T37 · localía y honba por turno', () => {
       { outcome: { type: 'dealerTenpaiDraw' }, renchan: true },
       { outcome: { type: 'otherWin' }, renchan: false },
       { outcome: { type: 'otherDraw' }, renchan: false },
+      { outcome: { type: 'chombo' }, renchan: false },
     ]
     const failures: string[] = []
 
@@ -117,14 +141,23 @@ describe('T37 · localía y honba por turno', () => {
 })
 
 describe('T38 · renchan y prórroga', () => {
-  it('tras renchan por victoria el dealer mantiene la localía y el honba vuelve a cero', () => {
+  it('tras renchan por victoria el dealer mantiene la localía y el honba sube', () => {
     const first: HandState = { wind: 'east', dealer: 'west', honba: 1 }
 
     expect(nextHand(first, { type: 'dealerWin' })).toStrictEqual({
       wind: 'east',
       dealer: 'west',
-      honba: 0,
+      honba: 2,
     })
+  })
+
+  it('ganar por tsumo y por ron dejan el contador exactamente igual, con la desviación 8', () => {
+    const first: HandState = { wind: 'east', dealer: 'west', honba: 1 }
+    const byTsumo = nextHand(first, { type: 'dealerWin' })
+    const byDraw = nextHand(first, { type: 'dealerTenpaiDraw' })
+
+    expect(byTsumo).toStrictEqual({ wind: 'east', dealer: 'west', honba: 2 })
+    expect(byDraw).toStrictEqual({ wind: 'east', dealer: 'west', honba: 2 })
   })
 
   it('tras renchan por draw con tenpai el dealer mantiene la localía y el honba sube', () => {

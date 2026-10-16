@@ -86,6 +86,10 @@ function move(playerId: PlayerId, delta: number): PlayerDelta {
   return { playerId, delta }
 }
 
+function sumOf(deltas: readonly PlayerDelta[]): number {
+  return deltas.reduce((total, entry) => total + entry.delta, 0)
+}
+
 /** Orden de asiento para comparar deltas en el mismo orden en que los emite el motor. */
 const SEATS: readonly PlayerId[] = [A, B, C, D]
 
@@ -414,12 +418,33 @@ describe('T32 · bote en ron múltiple', () => {
 })
 
 describe('T33 · chombo', () => {
-  it('el chombo asigna −8000 al que abandona sin saldo para nadie más', () => {
+  it('el chombo reparte 8000 entre la mesa: 4000 al dealer y 2000 a cada no dealer', () => {
     const resolution = resolve(chomboInput(C))
 
-    expect(resolution.deltas).toStrictEqual([move(C, -8000)])
+    expect(resolution.deltas).toStrictEqual([
+      move(A, 4000),
+      move(B, 2000),
+      move(C, -8000),
+      move(D, 2000),
+    ])
     expect(resolution.values).toStrictEqual([])
     expect(resolution.bankrupt).toBe(false)
+  })
+
+  it('el chombo del dealer reparte 12000: 4000 a cada uno de los tres rivales', () => {
+    const resolution = resolve(chomboInput(A, { dealerId: A }))
+
+    expect(resolution.deltas).toStrictEqual([
+      move(A, -12000),
+      move(B, 4000),
+      move(C, 4000),
+      move(D, 4000),
+    ])
+  })
+
+  it('la penalización se conserva: la suma de los cuatro deltas es cero', () => {
+    expect(sumOf(resolve(chomboInput(C)).deltas)).toBe(0)
+    expect(sumOf(resolve(chomboInput(A, { dealerId: A })).deltas)).toBe(0)
   })
 
   it('el chombo no interrumpe la partida: el turno se resuelve con normalidad', () => {
@@ -432,14 +457,18 @@ describe('T33 · chombo', () => {
   it('un chombo con riichi declarado aplica ambas penalizaciones', () => {
     const resolution = resolve(chomboInput(C, { riichiDeclaredBy: [B] }))
 
-    expect(resolution.deltas).toStrictEqual([move(B, -1000), move(C, -8000)])
+    expect(resolution.deltas).toStrictEqual([
+      move(A, 4000),
+      move(B, 1000),
+      move(C, -8000),
+      move(D, 2000),
+    ])
     expect(resolution.riichiSticks).toBe(1)
   })
 })
 
 type SweepScenario = {
   readonly name: string
-  readonly chombos: number
   readonly isWin: boolean
   readonly build: (riichi: readonly PlayerId[], potBefore: number) => TurnInput
 }
@@ -450,21 +479,21 @@ const POT_OPTIONS = [0, 1]
 const SWEEP_SCENARIOS: readonly SweepScenario[] = [
   {
     name: 'tsumo del dealer',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       tsumoInput([win(A, HAND_1)], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'tsumo de no dealer',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       tsumoInput([win(B, HAND_1)], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'suufon renta',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       tsumoInput([win(A, HAND_MANGAN), win(B, HAND_1), win(C, HAND_1), win(D, HAND_1)], {
@@ -474,21 +503,21 @@ const SWEEP_SCENARIOS: readonly SweepScenario[] = [
   },
   {
     name: 'ron del dealer',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       ronInput([win(A, HAND_1)], D, { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'ron simple',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       ronInput([win(B, HAND_1)], C, { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'doble ron',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       ronInput([win(B, HAND_1), win(C, HAND_2)], D, {
@@ -498,7 +527,7 @@ const SWEEP_SCENARIOS: readonly SweepScenario[] = [
   },
   {
     name: 'triple ron',
-    chombos: 0,
+
     isWin: true,
     build: (riichi, potBefore) =>
       ronInput([win(B, HAND_1), win(C, HAND_2), win(D, HAND_1)], A, {
@@ -508,42 +537,41 @@ const SWEEP_SCENARIOS: readonly SweepScenario[] = [
   },
   {
     name: 'empate con un tenpai',
-    chombos: 0,
+
     isWin: false,
     build: (riichi, potBefore) =>
       drawInput([B], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'empate con tres tenpai',
-    chombos: 0,
+
     isWin: false,
     build: (riichi, potBefore) =>
       drawInput([B, C, D], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'empate sin tenpai',
-    chombos: 0,
+
     isWin: false,
     build: (riichi, potBefore) =>
       drawInput([], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'empate con todos tenpai',
-    chombos: 0,
+
     isWin: false,
     build: (riichi, potBefore) =>
       drawInput([A, B, C, D], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
   },
   {
     name: 'prórroga',
-    chombos: 0,
+
     isWin: false,
     build: (riichi, potBefore) =>
       drawInput([C, D], { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }, true),
   },
   {
     name: 'chombo',
-    chombos: 1,
     isWin: false,
     build: (riichi, potBefore) =>
       chomboInput(C, { riichiDeclaredBy: riichi, riichiSticksBefore: potBefore }),
@@ -551,7 +579,7 @@ const SWEEP_SCENARIOS: readonly SweepScenario[] = [
 ]
 
 describe('T34 · invariante de cuadre', () => {
-  it('todas las combinaciones cuadran con Σ deltas = −1000 × (riichi − reclamados) − 8000 × chombos', () => {
+  it('todas las combinaciones cuadran con Σ deltas = −1000 × (riichi − reclamados)', () => {
     const failures: string[] = []
     let checked = 0
 
@@ -563,7 +591,6 @@ describe('T34 · invariante de cuadre', () => {
             deltas: resolution.deltas,
             riichiDeclared: riichi.length,
             riichiSticksClaimedThisTurn: scenario.isWin ? potBefore + riichi.length : 0,
-            chombos: scenario.chombos,
           })
 
           checked += 1
@@ -616,7 +643,6 @@ describe('T34 · invariante de cuadre', () => {
         deltas: resolution.deltas,
         riichiDeclared: 1,
         riichiSticksClaimedThisTurn: 1,
-        chombos: 0,
       }),
     ).toStrictEqual({ ok: true })
   })
@@ -634,7 +660,6 @@ describe('T34 · invariante de cuadre', () => {
         deltas: suma,
         riichiDeclared: 1,
         riichiSticksClaimedThisTurn: 0,
-        chombos: 0,
       }),
     ).toStrictEqual({ ok: false, expected: -1000, actual: 0 })
   })
@@ -645,7 +670,6 @@ describe('T34 · invariante de cuadre', () => {
         deltas: [move(B, -500)],
         riichiDeclared: 1,
         riichiSticksClaimedThisTurn: 0,
-        chombos: 0,
       }),
     ).toStrictEqual({ ok: false, expected: -1000, actual: -500 })
   })
@@ -655,7 +679,12 @@ describe('T35 · detección de bancarrota', () => {
   it('un chombo que deja a alguien bajo cero se aplica íntegro y devuelve el saldo negativo', () => {
     const resolution = resolve(chomboInput(C, { players: table([25000, 25000, 7000, 25000]) }))
 
-    expect(resolution.deltas).toStrictEqual([move(C, -8000)])
+    expect(resolution.deltas).toStrictEqual([
+      move(A, 4000),
+      move(B, 2000),
+      move(C, -8000),
+      move(D, 2000),
+    ])
     expect(resolution.bankrupt).toBe(true)
     expect(resolution.bankruptPlayerId).toBe(C)
     expect(resolution.bankruptBalance).toBe(-1000)
@@ -695,6 +724,22 @@ describe('T06 · dealer real', () => {
     { dealerId: D, seat: 'north' },
   ] as const
 
+  /** Reparto si quien abandona es C: 8000 si C no es el dealer, 12000 si lo es. */
+  const CHOMBO_FROM_NON_DEALER = {
+    east: [move(A, 4000), move(B, 2000), move(C, -8000), move(D, 2000)],
+    south: [move(A, 2000), move(B, 4000), move(C, -8000), move(D, 2000)],
+    west: [move(A, 4000), move(B, 4000), move(C, -12000), move(D, 4000)],
+    north: [move(A, 2000), move(B, 2000), move(C, -8000), move(D, 4000)],
+  } as const
+
+  /** Reparto cuando quien abandona es el propio dealer: 12000 entre los tres rivales. */
+  const CHOMBO_FROM_DEALER = {
+    east: [move(A, -12000), move(B, 4000), move(C, 4000), move(D, 4000)],
+    south: [move(A, 4000), move(B, -12000), move(C, 4000), move(D, 4000)],
+    west: [move(A, 4000), move(B, 4000), move(C, -12000), move(D, 4000)],
+    north: [move(A, 4000), move(B, 4000), move(C, 4000), move(D, -12000)],
+  } as const
+
   it.each(DEALERS)(
     'un tsumo de 1 han 30 fu del dealer de $seat paga 500 de cada uno y cobra 1500',
     ({ dealerId }) => {
@@ -732,11 +777,20 @@ describe('T06 · dealer real', () => {
   )
 
   it.each(DEALERS)(
-    'un chombo no depende del dealer de $seat: penaliza 8000 a quien abandona',
-    ({ dealerId }) => {
+    'un chombo sí depende del dealer de $seat: el reparto de la penalización cambia',
+    ({ dealerId, seat }) => {
       const resolution = resolve(chomboInput(C, { dealerId }))
 
-      expect(resolution.deltas).toStrictEqual([move(C, -8000)])
+      expect(resolution.deltas).toStrictEqual([...CHOMBO_FROM_NON_DEALER[seat]])
+    },
+  )
+
+  it.each(DEALERS)(
+    'un chombo del dealer reparte 12000 entre los tres rivales con la localía en $seat',
+    ({ dealerId, seat }) => {
+      const resolution = resolve(chomboInput(dealerId, { dealerId }))
+
+      expect(resolution.deltas).toStrictEqual([...CHOMBO_FROM_DEALER[seat]])
     },
   )
 

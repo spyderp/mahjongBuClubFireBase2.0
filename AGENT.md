@@ -332,7 +332,7 @@ Consecuencias que el código tiene que respetar:
 | `players/{playerId}`                            | `externalId`, `name`, `active`, `createdAt`, `updatedAt`                                       |
 | `seasons/{seasonId}`                            | `title`, `dateFrom`, `dateTo`, `status`, `createdAt`, `updatedAt`                              |
 | `games/{gameId}`                                | `seasonId`, `date`, `gameLength`, `ruleset`, `rulesetVersion`, `startPoints`, `status`, `mustFinalize`, `results[]`, `finalizationAudit[]`, `turnAudit[]`, `createdAt`, `updatedAt` |
-| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `yakuHanOverride`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `value[]`, `deltas[]`, `capturedBy`, `updatedBy`, `updatedAt`, `isRenchan`, `isFinalTurn`, `audit[]`, `createdAt` |
+| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `yakuHanOverride`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `discarderId`, `chomboId`, `value[]`, `deltas[]`, `capturedBy`, `updatedBy`, `updatedAt`, `isRenchan`, `isFinalTurn`, `audit[]`, `createdAt` |
 | `playerSeasonStats/{playerId}/stats/{seasonId}` | ID = temporada. `playerId`, `seasonId`, `actualPoints`, `gamesPlayed`, `victories`, `positions`, `yakuStats` |
 | `rankings/{seasonId}/players/{playerId}`        | ID compuesto. `playerId`, `seasonId`, `points`, `gamesPlayed`, `rank`, `updatedAt`           |
 
@@ -368,6 +368,12 @@ Detalle de los campos estructurados:
 - `wind`, `honba` y `dealerId` de un turno son **estado derivado** de los turnos anteriores, no captura.
   Los escribe el recorrido de `domain/replay.ts`. `dealerId` es el campo que **manda en los pagos**: es el
   dealer de ese turno y no el del asiento Este.
+- `discarderId` y `chomboId` de un turno son **captura**, no cálculo, pero son los dos campos sin los
+  cuales un ron o un chombo guardado no se puede volver a resolver: el recorrido de
+  `domain/replay.ts` los necesita para reconstruir la mano y, sin ellos, rechazaría la partida con
+  `incompleteTurn`. Los dos son `PlayerId | null` y valen `null` cuando el turno no es de ese tipo —
+  un `null` explícito **no** es lo mismo que un dato ausente, y el parche lo distingue con
+  `!== undefined` y no con `??`.
 - `seasonId: string | null`. Nullable a propósito: la temporada se **deduce de `date`**, y una partida
   cuya fecha no cae en ningún rango se queda sin temporada en lugar de ser inválida. Dos temporadas no
   pueden solaparse, así que la asignación por fecha nunca es ambigua.
@@ -383,8 +389,9 @@ Detalle de los campos estructurados:
 - **El documento de `games` no guarda `totalTurns` ni `riichiSticks`**: los dos son lecturas del último
   turno, igual que los contadores de `players`.
 - La suma de los `deltas` de un turno **no es cero por construcción**:
-  `Σ deltas = −(1000 × riichi declarados) − (8000 × chombos)`. Ni el bote de riichi ni el chombo van a
-  ningún jugador. Validar con `=== 0` rechaza turnos correctos.
+  `Σ deltas = −(1000 × riichi declarados − reclamados)`. El bote de riichi sale del marcador sin entrar
+  en nadie. El chombo **no aparece en la fórmula** porque su penalización se reparte entre la mesa y es
+  neutra en la suma. Validar con `=== 0` rechaza turnos correctos.
 - `turns/{turnNo}`: ID como el número del turno en decimal, **sin relleno con ceros** —el turno 1 se llama
   `1`—. El relleno a dos dígitos rompía el orden lexicográfico a partir del turno 100, y ese techo llevaba
   dos revisiones abierto. **El orden lo fija el campo numérico `turnNo`, nunca el identificador del
@@ -440,6 +447,29 @@ reversión: basta con volver a calcular desde `games[]`. Escribe en `rankings` c
   sistema no la reconoce.
 - La sesión persistida de Firebase Auth habilita la lectura pública sin exponer credenciales: se
   comprueba que haya sesión para escribir, no para leer.
+
+**T45 · El registro de correcciones lo garantiza el cliente, no las reglas.** `firestore.rules` no
+menciona `audit` en ninguna línea y no debe hacerlo: las reglas no distinguen un campo de otro dentro
+de un documento, así que `allow write` concede reescribir `audit[]` entero igual que concede corregir
+el marcador. Quien puede corregir un turno **puede** borrar su historial, y en Firestore no hay forma
+de impedirlo desde el servidor sin un segundo documento inmutable o reglas por campo que el.rules
+formato no permite.
+
+Lo que sostiene la trazabilidad es, por tanto, el cliente, en tres puntos:
+
+1. `data/turns.repository.ts` **añade** a `audit[]` y nunca reescribe sus entradas; `TURN_PATCH_FIELDS`
+   es la lista cerrada de lo que `update` sabe cambiar, y ninguna de ellas es `audit`.
+2. `useGameTurns` manda `expectedAuditCount` en cada corrección (RF-19.12) y rechaza si el registro
+   tiene otra longitud, así que dos correcciones simultáneas no se pisan.
+3. `turnsRepository.update` ordena las entradas y `updatedBy`/`updatedAt` los toma de la última.
+
+Consecuencia asumida: un usuario con credenciales de la aplicación y acceso directo al proyecto puede
+manipular el historial. El club es cerrado y la finalización reescribe los agregados, así que el riesgo
+está acotado, pero **no** es una garantía del servidor. Si algún día hace falta, el camino es un
+`audit/{entryId}` aparte con reglas de solo-creación.
+
+> Un test de `firestore.rules.test.ts` fija que las reglas no hablan de `audit`, para que nadie las
+> toque creyendo que una de ellas lo protege.
 
 ---
 

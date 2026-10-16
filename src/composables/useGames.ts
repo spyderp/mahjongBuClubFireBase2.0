@@ -11,9 +11,12 @@ import type { PlayerRecord } from '@/data/players.repository'
 import { rankingsRepository } from '@/data/rankings.repository'
 import type { RankingEntry } from '@/data/rankings.repository'
 import { turnsRepository } from '@/data/turns.repository'
-import type { TurnRecord } from '@/data/turns.repository'
+import type { TurnRecord, UpdateTurnPatch } from '@/data/turns.repository'
+import { capturedTurnOf } from '@/data/turns.repository'
 import { finalizeResults, offersAbandon, playerScore, transition } from '@/domain/game'
 import type { FinalizablePlayer, PlayerFinalResult } from '@/domain/game'
+import { replayTurns } from '@/domain/replay'
+import type { CapturedTurn, ReplayResult } from '@/domain/replay'
 import { recalculate } from '@/domain/stats/recalculate'
 import type { RankedGameResult, StatsGame, WinningHand } from '@/domain/stats'
 import type { GameId, GameStatus, PlayerId, SeasonId, Timestamp } from '@/domain/types'
@@ -65,8 +68,18 @@ export function useGames(seasonId?: MaybeRefOrGetter<SeasonId | null>) {
       }
 
       const names = await resolvePlayerNames(queryCache)
+      /**
+       * RF-18.12 y RNF-3: el resultado final sale de los turnos **re-derivados**, no de los que
+       * quedaron escritos. Para una partida corregida da igual —`correctTurn` ya los escribió
+       * re-derivados— y para una captura anterior a `specs/002` es la diferencia entre el número que
+       * se capturó y el que la partida realmente vale.
+       *
+       * Solo se recorre si la partida se va a **finalizar**: una que se aborta por debajo del
+       * mínimo no calcula resultados y no tiene por qué ser reproducible.
+       */
+      const finalsSource = decided.status === 'finalized' ? derivedTurnsOf(game, turns) : turns
       const results =
-        decided.status === 'finalized' ? toGameResultDocs(finalsOf(game, turns), names) : []
+        decided.status === 'finalized' ? toGameResultDocs(finalsOf(game, finalsSource), names) : []
       const batch = createBatch()
 
       await gamesRepository.update(
@@ -83,7 +96,7 @@ export function useGames(seasonId?: MaybeRefOrGetter<SeasonId | null>) {
       )
 
       if (decided.status === 'finalized' && game.seasonId !== null) {
-        await rewriteSeasonDocs(game.seasonId, gameId, 'finalized', results, turns, batch)
+        await rewriteSeasonDocs(game.seasonId, gameId, 'finalized', results, finalsSource, batch)
       }
 
       await batch.commit()
@@ -203,13 +216,84 @@ export function useGameDetail(gameId: MaybeRefOrGetter<GameId>) {
 
 const STALE_DAYS = 7
 
-function nowTimestamp(): Timestamp {
+export function nowTimestamp(): Timestamp {
   const milliseconds = Date.now()
 
   return {
     seconds: Math.floor(milliseconds / 1000),
     nanoseconds: (milliseconds % 1000) * 1_000_000,
   }
+}
+
+/**
+ * La partida recorrida con `domain/replay.ts`, o el rechazo que la deja sin reproducir.
+ *
+ * `patch` se aplica solo al turno que se está corrigiendo: es la partida ya corregida la que se
+ * deriva, no la guardada.
+ *
+ * **Decisión del club del 2026-10-15: una partida que el recorrido rechaza no se puede finalizar.**
+ * Finalizarla con los deltas que quedaron escritos produciría un resultado que la partida no
+ * respalda —y que nadie podría comprobar contra RNF-3—, así que aquí no hay vuelta atrás: se rechaza
+ * y se dice qué turno lo impide y por qué (RF-18.16).
+ */
+export function replayOutcomeOf(
+  game: GameRecord,
+  turns: readonly TurnRecord[],
+  desdeTurno: number,
+  patch?: UpdateTurnPatch,
+): ReplayOutcome {
+  const captured: readonly CapturedTurn[] = turns.map((turn) =>
+    turn.turnNo === desdeTurno && patch !== undefined
+      ? capturedTurnOf(turn, patch)
+      : capturedTurnOf(turn),
+  )
+  const result: ReplayResult = replayTurns(
+    game.players.map((player) => ({
+      playerId: player.playerId,
+      seat: player.seat,
+      score: game.startPoints,
+    })),
+    captured,
+    desdeTurno,
+  )
+
+  if (!result.ok) {
+    throw new DataError(
+      'replayInvalid',
+      `El turno ${result.turnNo} no se puede recalcular: ${result.reason}`,
+      { turn: String(result.turnNo) },
+    )
+  }
+
+  return result.outcome
+}
+
+export type ReplayOutcome = Extract<ReplayResult, { readonly ok: true }>['outcome']
+
+/**
+ * Los turnos de la partida con los valores re-derivados por `domain/replay.ts`. Reutiliza
+ * `replayOutcomeOf`, así que **rechaza** igual que Corrige y `deleteTurn`: no hay resultado final
+ * posible sobre una partida que no se puede reproducir.
+ */
+function derivedTurnsOf(game: GameRecord, turns: readonly TurnRecord[]): readonly TurnRecord[] {
+  const result = replayOutcomeOf(game, turns, 1)
+  const overrides = new Map(result.turns.map((turn) => [turn.turnNo, turn]))
+
+  return turns.map((turn) => {
+    const derived = overrides.get(turn.turnNo)
+
+    return derived === undefined
+      ? turn
+      : {
+          ...turn,
+          wind: derived.wind,
+          dealerId: derived.dealerId,
+          honba: derived.honba,
+          riichiSticks: derived.riichiSticks,
+          value: derived.values,
+          deltas: derived.deltas,
+        }
+  })
 }
 
 function invalidateSeasonDerived(
@@ -235,9 +319,7 @@ function finalsOf(game: GameRecord, turns: readonly TurnRecord[]): readonly Play
       seat: participant.seat,
       score,
       chombo: turns.some(
-        (turn) =>
-          turn.resultType === 'chombo' &&
-          turn.deltas.some((d) => d.playerId === participant.playerId),
+        (turn) => turn.resultType === 'chombo' && turn.chomboId === participant.playerId,
       ),
       bankrupt: score < 0,
     }

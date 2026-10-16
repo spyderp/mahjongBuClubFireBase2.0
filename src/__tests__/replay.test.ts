@@ -159,6 +159,50 @@ describe('T07 · estado inicial de la partida', () => {
   })
 })
 
+/**
+ * T34 · RF-23.3 y RF-23.4. El estado que se va a capturar **no** viene del teclado, y la interfaz
+ * lo necesita para mostrarlo: sin `nextHand` en el resultado del recorrido, `TurnForm` tendría que
+ * volver a recorrer la partida —y a reinventar `nextHand`— para pintar tres valores.
+ */
+describe('T34 · estado de la mano siguiente', () => {
+  it('sin turnos guardados, la mano siguiente es el estado inicial', () => {
+    const outcome = expectOk(replayTurns(PLAYERS, [], 1))
+
+    expect(outcome.nextHand).toStrictEqual({ wind: 'east', dealer: 'east', honba: 0 })
+  })
+
+  it('con turnos guardados, es el estado que dejaría el último', () => {
+    const outcome = expectOk(replayTurns(PLAYERS, consecutiveWins(3), 1))
+
+    // Tres manos ganadas por quien no era dealer: la localía avanza y el contador se queda a cero,
+    // porque se pierde la localía. El dealer del tercer turno es Oeste y al acabar pasa a Norte.
+    expect(outcome.turns.at(-1)).toMatchObject({ wind: 'east', dealerId: C, honba: 0 })
+    expect(outcome.nextHand).toStrictEqual({ wind: 'east', dealer: 'north', honba: 0 })
+  })
+
+  it('el dealer que conserva la tenpai mantiene la localía y sube el honba', () => {
+    const outcome = expectOk(replayTurns(PLAYERS, [drawTurn(1, [A]), drawTurn(2, [A])], 1))
+
+    // Dos renchan del Este: la localía no se mueve y el honba sube en cada una.
+    expect(outcome.nextHand).toStrictEqual({ wind: 'east', dealer: 'east', honba: 2 })
+  })
+
+  it('el dealer que gana también sube el honba, con la desviación 8', () => {
+    const outcome = expectOk(
+      replayTurns(PLAYERS, [drawTurn(1, [A]), drawTurn(2, [A]), tsumoTurn(3, A)], 1),
+    )
+
+    expect(outcome.nextHand).toStrictEqual({ wind: 'east', dealer: 'east', honba: 3 })
+  })
+
+  it('nextHand es el estado del turno siguiente, no una copia del último', () => {
+    const outcome = expectOk(replayTurns(PLAYERS, consecutiveWins(1), 1))
+
+    expect(outcome.turns[0]).toMatchObject({ dealerId: A, honba: 0 })
+    expect(outcome.nextHand).toStrictEqual({ wind: 'east', dealer: 'south', honba: 0 })
+  })
+})
+
 describe('T08 · recorrido hacia delante', () => {
   it('la localía, el honba y el viento avanzan solos a lo largo de la partida', () => {
     const outcome = expectOk(replayTurns(PLAYERS, consecutiveWins(5), 1))
@@ -167,25 +211,25 @@ describe('T08 · recorrido hacia delante', () => {
       outcome.turns.map((replayed) => [replayed.wind, replayed.dealerId, replayed.honba]),
     ).toStrictEqual([
       ['east', A, 0],
-      ['east', B, 1],
-      ['east', C, 2],
-      ['east', D, 3],
-      ['south', A, 4],
+      ['east', B, 0],
+      ['east', C, 0],
+      ['east', D, 0],
+      ['south', A, 0],
     ])
   })
 
-  it('si el dealer gana, conserva la localía y el honba vuelve a cero', () => {
+  it('si el dealer gana, conserva la localía y el honba sube', () => {
     const outcome = expectOk(
       replayTurns(PLAYERS, [tsumoTurn(1, A), tsumoTurn(2, A), tsumoTurn(3, B), tsumoTurn(4, C)], 1),
     )
 
-    // Dos renchan seguidos del Este mantienen su localía con honba 0. El turno 3 lo gana B, que no
-    // es dealer, así que la localía avanza y el honba vuelve a 1 en el turno siguiente.
+    // Dos renchan seguidos del Este mantienen su localía y suben el contador. El turno 3 lo gana B, que
+    // no es dealer, así que la localía avanza y el contador vuelve a cero en el turno siguiente.
     expect(outcome.turns.map((replayed) => [replayed.dealerId, replayed.honba])).toStrictEqual([
       [A, 0],
-      [A, 0],
-      [A, 0],
-      [B, 1],
+      [A, 1],
+      [A, 2],
+      [B, 0],
     ])
   })
 
@@ -202,15 +246,15 @@ describe('T08 · recorrido hacia delante', () => {
   })
 
   it('paga al que ocupa la localía y no al del asiento Este', () => {
-    // Turno 1: el Este tiene la localía y no gana, así que la pierde y el honba sube a 1. Turno 2:
-    // la localía es del Sur y gana el Oeste. Antes de 002 el motor cobraría a C como no dealer.
+    // Turno 1: el Este tiene la localía y no gana, así que la pierde y el contador vuelve a cero.
+    // Turno 2: la localía es del Sur y gana el Oeste. Antes de 002 el motor cobraría a C como no dealer.
     const outcome = expectOk(replayTurns(PLAYERS, [tsumoTurn(1, B), tsumoTurn(2, C)], 1))
 
     expect(outcome.turns[1]?.deltas).toStrictEqual([
-      { playerId: A, delta: -400 },
-      { playerId: B, delta: -600 },
-      { playerId: C, delta: 1400 },
-      { playerId: D, delta: -400 },
+      { playerId: A, delta: -300 },
+      { playerId: B, delta: -500 },
+      { playerId: C, delta: 1100 },
+      { playerId: D, delta: -300 },
     ])
   })
 
@@ -218,10 +262,10 @@ describe('T08 · recorrido hacia delante', () => {
     const turnos = [tsumoTurn(1, B), tsumoTurn(2, C), tsumoTurn(3, C)]
     const ultimo = expectOk(replayTurns(PLAYERS, turnos, 1)).turns.at(-1)
 
-    // El Oeste tiene la localía en el turno 3. Con honba 2 cada pagador añade 200, así que son
-    // 700 de cada uno: 3 × 700. Sin la localía real serían 500 y 500 y 500.
+    // El Oeste tiene la localía en el turno 3, pero el turno 2 lo ganó él mismo sin ser dealer, así que
+    // entra con honba 0: 500 de cada uno. Sin la localía real el Este pagaría 500 y los otros 300.
     expect(ultimo?.dealerId).toBe(C)
-    expect(ultimo?.deltas.find((delta) => delta.playerId === C)?.delta).toBe(2100)
+    expect(ultimo?.deltas.find((delta) => delta.playerId === C)?.delta).toBe(1500)
   })
 
   it('no muta los turnos que recibe', () => {
@@ -247,23 +291,23 @@ describe('T09 · recorrido hacia atrás y borrado', () => {
 
     const borrado = expectOk(replayTurns(PLAYERS, sinTercero, 1))
 
-    // No basta con restar los deltas del turno borrado: los turnos supervivientes pierden también
-    // un honba, así que sus pagos cambian. Por eso el borrado tiene que re-derivar y no restar.
+    // No basta con restar los deltas del turno borrado: los turnos supervivientes cambian de localía y
+    // sus pagos con ella. Por eso el borrado tiene que re-derivar y no restar.
     expect(borrado.turns).toHaveLength(4)
     expect(totalOf(borrado)).toBe(100000)
     expect(borrado.turns.map((entry) => [entry.turnNo, entry.dealerId, entry.honba])).toStrictEqual(
       [
         [1, A, 0],
-        [2, B, 1],
-        [4, C, 2],
-        [5, D, 3],
+        [2, B, 0],
+        [4, C, 0],
+        [5, D, 0],
       ],
     )
     expect(borrado.scores).toStrictEqual([
-      { playerId: A, score: 25200 },
-      { playerId: B, score: 27000 },
-      { playerId: C, score: 24800 },
-      { playerId: D, score: 23000 },
+      { playerId: A, score: 25000 },
+      { playerId: B, score: 26400 },
+      { playerId: C, score: 25000 },
+      { playerId: D, score: 23600 },
     ])
   })
 
@@ -518,9 +562,9 @@ describe('T13 · ida y vuelta', () => {
     expect(despues.turns.map((entry) => [entry.turnNo, entry.dealerId, entry.honba])).toStrictEqual(
       [
         [1, A, 0],
-        [2, B, 1],
-        [3, B, 2],
-        [4, C, 3],
+        [2, B, 0],
+        [3, B, 1],
+        [4, C, 0],
       ],
     )
     expect(despues.scores).not.toStrictEqual(antes.scores)
@@ -549,15 +593,15 @@ describe('T13 · ida y vuelta', () => {
 
     expect(entero.turns.map((entry) => [entry.turnNo, entry.dealerId, entry.honba])).toStrictEqual([
       [1, A, 0],
-      [2, B, 1],
-      [3, C, 2],
-      [4, D, 3],
+      [2, B, 0],
+      [3, C, 0],
+      [4, D, 0],
     ])
     expect(borrado.turns.map((entry) => [entry.turnNo, entry.dealerId, entry.honba])).toStrictEqual(
       [
         [1, A, 0],
-        [3, B, 1],
-        [4, C, 2],
+        [3, B, 0],
+        [4, C, 0],
       ],
     )
   })
@@ -605,10 +649,27 @@ describe('T15 · conservación de puntos', () => {
     expect(totalOf(outcome)).toBe(100000)
   })
 
-  it('cada chombo destruye 8 000', () => {
+  it('un chombo no destruye puntos: los reparte y la partida conserva los 100 000', () => {
     const outcome = expectOk(replayTurns(PLAYERS, [chomboTurn(1, C), chomboTurn(2, A)], 1))
 
-    expect(totalOf(outcome)).toBe(100000 - 16000)
+    expect(totalOf(outcome)).toBe(100000)
+  })
+
+  it('un chombo conserva la localía y el contador, con la desviación 8', () => {
+    const turnos = [tsumoTurn(1, A), tsumoTurn(2, A), chomboTurn(3, D), tsumoTurn(4, A)]
+    const outcome = expectOk(replayTurns(PLAYERS, turnos, 1))
+
+    // El Este gana el turno 1, así que el turno 2 entra con honba 1; al ganarlo también, el turno 3
+    // entra con honba 2. El turno 3 es un chombo, que no mueve ni la localía ni el contador, así que el
+    // turno 4 lo juega otra vez el Este con honba 2.
+    expect(outcome.turns.map((entry) => [entry.turnNo, entry.dealerId, entry.honba])).toStrictEqual(
+      [
+        [1, A, 0],
+        [2, A, 1],
+        [3, A, 2],
+        [4, A, 2],
+      ],
+    )
   })
 
   it('cada ficha de riichi sin reclamar resta 1 000', () => {
@@ -642,7 +703,7 @@ describe('T15 · conservación de puntos', () => {
     const conChombo = expectOk(replayTurns(PLAYERS, turnos, 1))
     const corregido = expectOk(replayTurns(PLAYERS, sinChombo, 1))
 
-    expect(totalOf(conChombo)).toBe(100000 - 8000 - 1000)
+    expect(totalOf(conChombo)).toBe(100000 - 1000)
     expect(totalOf(corregido)).toBe(100000 - 1000)
   })
 })

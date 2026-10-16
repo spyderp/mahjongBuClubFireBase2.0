@@ -93,6 +93,9 @@ const catalogo = {
       saveFailed: 'No se pudo guardar la partida.',
       guestSeatTaken:
         'Un invitado solo puede ocupar un asiento: dos asientos comparten identificador.',
+      notFound: 'No hemos encontrado esa partida.',
+      notOpen: 'Esa partida no admite cambios ahora mismo.',
+      finalizedGame: 'Una partida finalizada solo admite deshacer la finalización.',
     },
     turn: {
       resultRequired: 'Elige el tipo de resultado.',
@@ -101,12 +104,26 @@ const catalogo = {
       notRepresentable: 'La combinación de han y fu no aparece en la tabla de puntuación.',
       windYaku: 'El yaku de viento no corresponde a este asiento ni a esta ronda.',
       chiiFu: '25 fu solo vale para chiitoitsu, y chiitoitsu solo vale 25 fu.',
-      notSquare: 'La suma de deltas no cuadra con los riichi y chombos del turno.',
+      notSquare: 'La suma de deltas no cuadra con los riichi declarados y no reclamados del turno.',
       duplicateNumber: 'Ya existe un turno con ese número.',
       gapInSequence: 'El turno anterior no está guardado.',
       moreThanThreeWinners: 'Un ron múltiple admite como mucho tres ganadores.',
       rulesetUnsupported: 'Esta partida no admite captura por su sistema de reglas.',
-      handFieldsRequired: 'Indica yaku, han de yaku, dora, fu y honba antes de guardar la mano.',
+      handFieldsRequired: 'Indica yaku, dora y fu antes de guardar la mano.',
+      /**
+       * T33 · Los cuatro rechazos nuevos de `specs/002`, más los tres que la fase 5 añadió al
+       * cerrar T28 a T32. Cada uno con su clave: el mensaje sale del código y no de `message`
+       * (AGENT.md → Errores), así que un rechazo sin clave se vería como una ruta en pantalla.
+       */
+      conflict: 'Este turno cambió mientras lo corregías. Vuelve a leerlo e inténtalo otra vez.',
+      auditFull: 'El registro de este turno ya no admite más correcciones.',
+      staleLocal: 'La partida cambió en otro sitio. Sincroniza antes de volver a corregir.',
+      suufonRejected: 'Una mano por tsumo no puede tener cuatro ganadores: elige un solo ganador.',
+      replayInvalid: 'El turno {turn} ya no se puede recalcular y no se ha guardado nada.',
+      gameMarked: 'La partida está marcada por bancarrota: solo se puede finalizar.',
+      notLastTurn: 'De una partida marcada por bancarrota solo se puede borrar el último turno.',
+      notReproducible:
+        'Esta partida no se puede reproducir con los turnos guardados, así que no se puede capturar ni finalizar.',
     },
     session: {
       required: 'Necesitas iniciar sesión para guardar el turno.',
@@ -265,6 +282,22 @@ const catalogo = {
     openWarnings: 'Jugadores ya presentes en otra partida abierta:',
     submit: 'Crear partida',
     bancarrota: 'Bancarrota',
+    /** T39 · RF-19.10: quién corrigió cada turno, cuándo y qué cambió. */
+    correctedBy: 'Corregido por {by} el {at}',
+    neverCorrected: 'Sin correcciones',
+    turnDeleted: 'Turno {turn} borrado el {at}',
+    audit: {
+      title: 'Registro de correcciones',
+      deleted: 'Borrado',
+      corrected: 'Corrección',
+      deletedInGame: 'Borrados sin turno anterior',
+      changes: 'Cambios',
+      noChanges: 'Sin cambios de valor',
+      from: 'de {from}',
+      to: 'a {to}',
+      derived: 'calculado por el sistema',
+      manual: 'cambiado a mano',
+    },
   },
   statsView: {
     title: 'Estadísticas',
@@ -320,6 +353,16 @@ const catalogo = {
     roundWind: 'Viento de ronda',
     dealerSeat: 'Localía',
     honba: 'Contadores',
+    /**
+     * T34 · RF-18.1 y RF-23.3. La ronda, la localía y el honba **no se capturan**: los calcula el
+     * sistema y se muestran para que quien está en la mesa sepa qué se va a guardar.
+     */
+    nextHand: {
+      title: 'Estado de la mano siguiente',
+      roundWind: 'Viento de ronda',
+      dealerSeat: 'Localía',
+      honba: 'Contadores',
+    },
     resultType: 'Resultado',
     resultTypes: {
       tsumo: 'Tsumo',
@@ -329,9 +372,32 @@ const catalogo = {
     },
     tenpai: 'Tenpai',
     winner: 'Ganador',
+    /** T35 · RF-21.1: de uno a tres ganadores por ron. */
+    winners: 'Ganadores',
+    addWinner: 'Añadir ganador',
     discarder: 'Descartador',
     yaku: 'Yaku',
+    /** T36 · RF-22.5: el total se deriva del catálogo y el ajuste va aparte, como delta. */
     yakuHan: 'Han de yaku',
+    yakuHanOverride: 'Ajuste manual de han',
+    catalogTotal: 'Suma del catálogo',
+    overrideNotice: 'El total lleva un ajuste manual de {delta} han sobre el catálogo.',
+    breakdown: 'Desglose del total',
+    /** RF-22.3: por qué un yaku marcado no ha entrado en el total. */
+    reasons: {
+      notCounted: 'no cuenta en esta mano',
+      limit: 'yaku de límite: no suma, vale 8 000',
+    },
+    /** RF-22.2: qué condiciones de `YakuCondition` no cumple la mano. */
+    conditions: {
+      resultType: 'el resultado de la mano',
+      closedHand: 'la mano cerrada',
+      riichiDeclared: 'el riichi declarado',
+      hasKan: 'un kan',
+      noKan: 'que no haya kan',
+      firstHand: 'la primera mano',
+      finalHand: 'la última mano',
+    },
     dora: 'Dora',
     fu: 'Fu',
     riichi: 'Riichi declarado',
@@ -341,7 +407,7 @@ const catalogo = {
     impossibleYakuNotice:
       'El sistema solo puede comprobar los yaku que no necesitan las fichas de la mano: no detecta todos los yaku imposibles.',
     bankruptNotice:
-      'Alguien ha quedado por debajo de cero: la partida ha terminado y hay que finalizarla.',
+      'Alguien ha quedado por debajo de cero: la partida solo admite borrar el último turno o finalizarla.',
     returnPointNotice:
       'Se ha superado el punto de retorno de 30 000; la partida continúa sin prolongation.',
   },

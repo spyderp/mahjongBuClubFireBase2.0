@@ -21,7 +21,7 @@ están en [`../AGENT.md`](../AGENT.md).
 | **Bote de mesa** | Fichas de riichi pendientes de reclamar                              |
 | **Han / Fu**     | Recuento de yaku y de fu de una mano; su producto da el valor        |
 | **Uma**          | Bonificación por posición final respecto del punto de retorno        |
-| **Chombo**       | Penalización de 8000 puntos por abandono de partida                  |
+| **Chombo**       | Penalización repartida entre la mesa por abandono de partida          |
 | **Yakuman**      | Yaku de límite, o mano de 13 o más han                               |
 | **Bancarrota**   | Situación de un jugador cuyo saldo queda por debajo de cero          |
 
@@ -94,13 +94,20 @@ del reglamento de referencia y está registrada como tal en §4.7.
 
 ### Chombo
 
-El abandono de un jugador durante la partida es una **penalización, no un final**. En el turno en que
-se registra:
+El abandono de un jugador durante la partida es una **penalización, no un final**. La mano queda
+anulada: no se otorgan puntos de victoria ni de tenpai. En el turno en que se registra:
 
-- El jugador que abandona recibe un delta de **−8000**. Los 8000 no van a ningún jugador, se
-  destruyen: la suma de los cuatro marcadores de la partida baja de 100 000 a 92 000.
+- Si el infractor **no es la localía**, recibe un delta de **−8000** y esos 8000 **se reparten**:
+  **4000 al dealer** y **2000 a cada uno de los otros dos jugadores** que no son localía.
+- Si el infractor **es la localía**, recibe un delta de **−12000** y esos 12000 **se reparten**:
+  **4000 a cada uno de los tres rivales**.
+- La penalización **se conserva**: sale de quien abandona y entra en los demás, así que la suma de los
+  cuatro marcadores de la partida no baja de 100 000.
+- La **localía no avanza** y el **contador de honba no se toca**: la mano siguiente se reparte desde el
+  mismo estado. El chombo no es un renchan, porque no es una mano jugada.
 - La partida **sigue abierta** y admite los turnos siguientes con normalidad.
-- El abandono queda registrado en `results[].chombo` y se cuenta en `yakuStats.chombo`.
+- El abandono queda registrado en `results[].chombo` y se cuenta en `yakuStats.chombo`, y **solo** del
+  jugador que lo provocó: los que cobran la penalización no cuentan como chombo.
 
 ### Bancarrota
 
@@ -119,10 +126,10 @@ final y las estadísticas del jugador:
 
 - `turnNo` — número de turno dentro de la partida, **correlativo y sin huecos**.
 - `wind` — viento de la ronda.
-- `dealerId` — localía del turno. **Capturado, no derivado**: quien captura lo indica, porque el
-  valor de la mano depende de si el ganador es la localía.
-- `honba` — contador de rondas no ganadas por el dealer. **Capturado, no derivado**, y con efecto en
-  el valor de la mano: cada contador añade 300 puntos.
+- `dealerId` — localía del turno. **Derivado y guardado**: el sistema lo calcula a partir de los turnos
+  anteriores en vez de leerlo del formulario.
+- `honba` — contador de **manos que el dealer lleva ganando**. **Derivado y guardado**, y con efecto
+  en el valor de la mano: cada contador añade 300 puntos.
 - `resultType` — `tsumo` | `ron` | `ryuukyoku` | `chombo`. Un ron o tsumo puede tener varios
   ganadores; un chombo se registra siempre como `chombo` y nunca se combina con otro resultado.
 - `yakuHan` — número de han aportados por yaku reales.
@@ -146,12 +153,16 @@ Los marcadores por turno se suman desde un valor inicial de **25 000** puntos po
 La suma de los cuatro `deltas` de un turno **no es cero por construcción**. La forma exacta es:
 
 ```
-Σ deltas = −(1000 × nº de riichi declarados en el turno) − (8000 × nº de chombos del turno)
+Σ deltas = −(1000 × nº de riichi declarados en el turno que no llegan a reclamarse)
 ```
 
-El bote de mesa y los 8000 del chombo salen del turno sin entrar en ningún `delta`, así que la
-validación de cuadre tiene que usar esta fórmula y no una igualdad a cero. El bote que se reclama sí
-es neutro: sale del bote y entra en el `delta` del ganador.
+El bote de mesa sale del turno sin entrar en ningún `delta`, así que la validación de cuadre tiene que
+usar esta fórmula y no una igualdad a cero. El bote que se reclama sí es neutro: sale del bote y entra
+en el `delta` del ganador.
+
+**El chombo no aparece en la fórmula** porque su penalización se reparte entre los demás jugadores:
+sale del infractor y entra en los otros, y por eso es neutra en la suma. Antes, cuando los 8000 se
+destruían, sí figuraba como un término propio.
 
 ---
 
@@ -211,8 +222,9 @@ En los tres casos el total añadido es `300 × honba`, y por eso un tsumo de loc
 exactamente lo mismo que el ron de la misma mano con honba 1. Los importes de honba son múltiplos
 exactos de 100, así que **no se redondean**.
 
-`honba` es una de las pocas reglas del reglamento de referencia que el club aplica **sin desviación**:
-el valor de una mano no depende solo del as, sino de cuántas rondas lleva el dealer sin ganar.
+`honba` cuenta **las manos que el dealer lleva ganando**: sube en cada renchan y vuelve a cero en
+cuanto la localía pasa a otro asiento. El valor de una mano no depende solo del as, sino de la racha del
+dealer; ver la desviación 8 de §4.5.
 
 #### Redondeo
 
@@ -301,9 +313,10 @@ haría que una mano de 6 han valiese 8000 en vez de 18000.
 | 4   | 40 o más | 12 000    | 4 000                |
 
 `N/A` significa que la combinación **no es representable** y el turno con esa combinación se rechaza.
-Las tres razones posibles, y el motor las distingue: los 20 fu solo existen por *pinfu*, que exige
-tsumo, así que su ron es N/A; los 25 fu son *chiitoitsu*, cuyo tsumo siempre lleva *menzen tsumo* y
-por tanto puntúa 3 han; y 70 fu o más solo se alcanza con cuatro kans, que ya es yakuman.
+Las tres razones posibles, y el motor las distingue: los 20 fu solo existen por *pinfu*, que solo
+produce 20 fu por tsumo porque por ron son 30, así que un ron de 20 fu es N/A; los 25 fu son
+*chiitoitsu*, cuyo tsumo siempre lleva *menzen tsumo* y por tanto puntúa 3 han; y 70 fu o más solo se
+alcanza con cuatro kans, que ya es yakuman.
 
 #### Reglas de fu
 
@@ -311,7 +324,8 @@ por tanto puntúa 3 han; y 70 fu o más solo se alcanza con cuatro kans, que ya 
 | ------------------------------ | ----- |
 | Base de cualquier mano cerrada | 20    |
 | *Chiitoitsu*                   | 25    |
-| *Pinfu*                        | 20    |
+| *Pinfu* por tsumo              | 20    |
+| *Pinfu* por ron a mano cerrada | 30    |
 | Ron a mano cerrada             | +10   |
 | Tsumo                          | +2    |
 | Triángulo cerrado              | +2    |
@@ -354,8 +368,23 @@ las implementa **así**, no «por defecto»:
 | 2 | Los 30 000 puntos avertan pero no cierran la partida          | Se puede capturar más allá del umbral     |
 | 3 | No se reconoce el *double riichi*                             | 1 han menos en esas manos                 |
 | 4 | No existe doble yakuman                                       | Toda combinación de límite vale 8000      |
-| 5 | El chombo penaliza con 8000 y no interrumpe                   | La partida sigue y computa                |
+| 5 | El chombo no interrumpe la partida                            | La partida sigue y computa                |
 | 6 | Se puede abandonar una partida inconclusa de forma terminal   | Sin retour en una partida de menos turnos  |
+| 7 | El *pinfu* por ron son 30 fu, no 20 planos                    | Es la fila de 1 han 30 fu de la tabla     |
+| 8 | El honba cuenta las manos que el dealer **gana**, no las que no | Sube en cada renchan y se pone a cero al perder la localía |
+
+La desviación 7 es una **corrección del 2026-10-15**, no una regla heredada: las reglas del club no
+decían qué pasaba con el *pinfu* ganado por ron, y ese dato faltaba. Queda escrita aquí y en
+`domain/yaku.ts`, pero **el 30 fu todavía no es automático**: `computeFu` no tiene consumidor en
+producción y el `fu` lo teclea quien captura. Hacerlo derivado es lo que queda pendiente.
+
+La desviación 8 es una **inversión de sentido del 2026-10-15**, no una regla heredada: el contador
+`honba` contaba hasta las pocas horas las **manos que el dealer no ganaba**, y el club confirmó que
+cuenta las **manos que el dealer lleva ganando**. La consecuencia práctica es que la regla se reduce a
+una frase: el contador **sube mientras el dealer conserva la localía y vuelve a cero en cuanto la
+pierde**. Antes el empate con tenpai sumaba y la victoria del dealer no, de modo que haga falta separar
+dos casos; ahora los dos hacen lo mismo. El tercer caso es el chombo, que conserva la localía pero
+**no** sube el contador, así que necesita un resultado de mano propio.
 
 Cada desviación tiene que estar cubierta por un test de `domain/` con su ejemplo numérico, porque
 cambian puntos reales y no se detectan leyendo el histórico.
@@ -393,13 +422,16 @@ comparables.
 
 ### Conservación de los puntos
 
-El total de una partida es 100 000 más o menos, y hay exactamente dos motivos por los que no lo es:
+El total de una partida es 100 000 más o menos, y hay **un solo** motivo por el que no lo es:
 
-- **Chombo**: −8 000 por cada abandono, que se destruyen.
 - **Bote de riichi no reclamado**: −1 000 por cada ficha declarada en una partida que no llega a
   reclamarse.
 
-Una temporada con partidas finalizadas sin chombo ni riichi sin reclamar conserva 100 000 por partida.
+El chombo **ya no figura aquí**: su penalización se reparte entre los demás jugadores, así que sale de
+quien abandona y entra en los otros, y la suma de los cuatro marcadores se conserva. Antes sí era un
+motivo, con −8 000 por cada abandono.
+
+Una temporada con partidas finalizadas sin riichi sin reclamar conserva 100 000 por partida.
 
 ---
 

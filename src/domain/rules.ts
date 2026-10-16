@@ -14,6 +14,7 @@ export type HandOutcome =
   | { readonly type: 'otherWin' }
   | { readonly type: 'dealerTenpaiDraw' }
   | { readonly type: 'otherDraw' }
+  | { readonly type: 'chombo' }
 
 /**
  * Mínimo de turnos por modo (RF-2.6): el Este completo en tonpuusen y Este + Sur en hanchan.
@@ -41,12 +42,20 @@ export function isRenchan(outcome: HandOutcome): boolean {
 
 /**
  * Siguiente mano (RF-3.13): la localía avanza por asiento cuando no hay renchan, el viento
- * avanza al volver la localía al Este, el honba sube cuando no gana el dealer y vuelve a
- * cero cuando gana (RF-3.13, `docs/domain.md` §2).
+ * avanza al volver la localía al Este, y el honba **sube con la localía y vuelve a cero al perderla**
+ * (RF-18.3, RF-18.5 y desviación 8 de `docs/domain.md` §4.5).
+ *
+ * El chombo es el tercer caso: conserva la localía pero **no** sube el contador, porque la mano no se
+ * jugó (RF-7.6 de `specs/001/spec.md`). Por eso tiene su propio tipo de resultado y no cabe ni en la
+ * rama del renchan ni en la del giro de localía.
  */
 export function nextHand(state: HandState, outcome: HandOutcome): HandState {
+  if (outcome.type === 'chombo') {
+    return state
+  }
+
   const renchan = isRenchan(outcome)
-  const honba = outcome.type === 'dealerWin' ? 0 : state.honba + 1
+  const honba = renchan ? state.honba + 1 : 0
 
   if (renchan) {
     return { ...state, honba }

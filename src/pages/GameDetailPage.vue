@@ -8,18 +8,18 @@ import { useGames, useGameDetail } from '@/composables/useGames'
 import { useGameTurns } from '@/composables/useGameTurns'
 import { usePlayers } from '@/composables/usePlayers'
 import { toGameId } from '@/domain/types'
-import type { PlayerId, Position, Seat } from '@/domain/types'
+import type { PlayerId, Position, Seat, Timestamp } from '@/domain/types'
 import { offersAbandon } from '@/domain/game'
 import type { GameRecord } from '@/data/games.repository'
 import { useSessionStore } from '@/stores/session'
 
 const props = defineProps<{ gameId: string }>()
 
-const { t } = useI18n()
+const { t, d } = useI18n()
 const session = useSessionStore()
 const gameId = computed(() => toGameId(props.gameId))
 const { state: gameState, refresh: refreshGame } = useGameDetail(gameId)
-const { data: turns } = useGameTurns(gameId)
+const { data: turns, nextHand } = useGameTurns(gameId)
 const { data: players } = usePlayers()
 const { finalizeGame, unfinalizeGame, abandonGame } = useGames()
 
@@ -55,6 +55,50 @@ const names = computed<ReadonlyMap<PlayerId, string>>(() => {
 
 function nameOf(playerId: PlayerId): string {
   return names.value.get(playerId) ?? playerId
+}
+
+function seatOf(playerId: PlayerId): Seat | undefined {
+  return game.value?.players.find((player) => player.playerId === playerId)?.seat
+}
+
+function seatLabel(playerId: PlayerId): string {
+  const seat = seatOf(playerId)
+
+  return seat === undefined ? playerId : t(`gamesView.seats.${seat}`)
+}
+
+/**
+ * RF-19.10: la marca de tiempo del registro, con el formato del locale (nunca `toLocaleString`).
+ * El `Timestamp` de Firestore no es un `Date`, así que se traduce antes de formatearlo.
+ */
+function atOf(value: Timestamp): string {
+  return d(new Date(value.seconds * 1000), 'short')
+}
+
+/** El nombre de un campo del registro, para no repetir el mapa de tipos en el template. */
+const AUDIT_FIELDS: Readonly<Record<string, string>> = {
+  wind: 'turnForm.roundWind',
+  dealerId: 'turnForm.dealerSeat',
+  honba: 'turnForm.honba',
+  resultType: 'turnForm.resultType',
+  yaku: 'turnForm.yaku',
+  yakuHan: 'turnForm.yakuHan',
+  yakuHanOverride: 'turnForm.yakuHanOverride',
+  doraCount: 'turnForm.dora',
+  fu: 'turnForm.fu',
+  tenpai: 'turnForm.tenpai',
+  riichiDeclaredBy: 'turnForm.riichi',
+  riichiSticks: 'turnForm.riichi',
+  value: 'handValue.totalPoints',
+  deltas: 'gamesView.finalScore',
+  discarderId: 'turnForm.discarder',
+  chomboId: 'turnForm.resultTypes.chombo',
+  isRenchan: 'turnForm.nextHand.honba',
+  isFinalTurn: 'turnForm.nextHand.title',
+}
+
+function fieldLabel(field: string): string {
+  return t(AUDIT_FIELDS[field] ?? 'turnForm.yaku')
 }
 
 const standby = computed(() => {
@@ -101,6 +145,17 @@ const standings = computed<readonly Standing[]>(() => {
 })
 
 const riichiSticks = computed(() => turns.value?.at(-1)?.riichiSticks ?? 0)
+
+/** El dealer de la mano siguiente: el jugador que ocupa el asiento que el recorrido devuelve. */
+const dealerId = computed<PlayerId | ''>(() => {
+  const seat = nextHand.value?.dealer
+
+  if (seat === undefined) {
+    return ''
+  }
+
+  return game.value?.players.find((player) => player.seat === seat)?.playerId ?? ''
+})
 
 const canCapture = computed(
   () =>
@@ -220,6 +275,30 @@ function now(): { seconds: number; nanoseconds: number } {
           <p class="mt-3 text-sm text-mahjong-muted">
             {{ t('gamesView.riichiPot') }}: {{ riichiSticks }}
           </p>
+
+          <fieldset
+            v-if="nextHand !== null"
+            class="mt-3 flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
+            data-test="next-hand"
+          >
+            <legend class="px-1 text-mahjong-muted">
+              {{ t('turnForm.nextHand.title') }}
+            </legend>
+            <span class="flex justify-between">
+              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.roundWind') }}</span>
+              <span data-test="next-wind">{{ t(`gamesView.seats.${nextHand.wind}`) }}</span>
+            </span>
+            <span class="flex justify-between">
+              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.dealerSeat') }}</span>
+              <span data-test="next-dealer">
+                {{ dealerId === '' ? '' : seatLabel(dealerId) }}
+              </span>
+            </span>
+            <span class="flex justify-between">
+              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.honba') }}</span>
+              <span data-test="next-honba">{{ nextHand.honba }}</span>
+            </span>
+          </fieldset>
         </div>
 
         <div>
@@ -270,17 +349,59 @@ function now(): { seconds: number; nanoseconds: number } {
           <ul
             class="divide-y divide-mahjong-border rounded border border-mahjong-border bg-mahjong-surface"
           >
-            <li v-for="turn in turns ?? []" :key="turn.turnNo" class="px-3 py-2 text-sm">
-              <span class="font-medium">T{{ turn.turnNo }}</span>
-              <span class="text-mahjong-muted">
-                · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+            <li
+              v-for="turn in turns ?? []"
+              :key="turn.turnNo"
+              class="flex flex-col gap-1 px-3 py-2 text-sm"
+            >
+              <span>
+                <span class="font-medium">T{{ turn.turnNo }}</span>
+                <span class="text-mahjong-muted">
+                  · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+                </span>
+                <span class="text-mahjong-muted">
+                  · {{ t('gamesView.capturedBy') }}: {{ turn.capturedBy }}
+                </span>
               </span>
-              <span class="text-mahjong-muted">
-                · {{ t('gamesView.capturedBy') }}: {{ turn.capturedBy }}
-              </span>
+              <ul
+                v-if="turn.audit.length > 0"
+                class="flex flex-col gap-1 text-xs text-mahjong-muted"
+                data-test="turn-audit"
+              >
+                <li v-for="(entry, index) in turn.audit" :key="`${entry.at.seconds}-${index}`">
+                  <template v-if="entry.action === 'delete'">
+                    {{ t('gamesView.turnDeleted', { turn: entry.turnNo, at: atOf(entry.at) }) }}
+                  </template>
+                  <template v-else>
+                    {{ t('gamesView.correctedBy', { by: entry.by, at: atOf(entry.at) }) }}
+                    <span>
+                      <span v-for="change in entry.changes" :key="change.field" class="ml-2">
+                        {{ fieldLabel(change.field) }} {{ t('gamesView.audit.from') }}
+                        {{ change.from }} {{ t('gamesView.audit.to') }} {{ change.to }} ({{
+                          change.derived
+                            ? t('gamesView.audit.derived')
+                            : t('gamesView.audit.manual')
+                        }})
+                      </span>
+                    </span>
+                  </template>
+                </li>
+              </ul>
             </li>
             <li v-if="(turns ?? []).length === 0" class="px-3 py-4 text-sm text-mahjong-muted">
               {{ t('gamesView.noTurns') }}
+            </li>
+          </ul>
+
+          <ul
+            v-if="(game.turnAudit ?? []).length > 0"
+            class="mt-3 flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-xs text-mahjong-muted"
+            data-test="game-turn-audit"
+          >
+            <li class="text-mahjong-muted">{{ t('gamesView.audit.deletedInGame') }}</li>
+            <li v-for="(entry, index) in game.turnAudit" :key="`${entry.at.seconds}-${index}`">
+              {{ t('gamesView.turnDeleted', { turn: entry.turnNo, at: atOf(entry.at) }) }}
+              {{ entry.by }}
             </li>
           </ul>
         </div>

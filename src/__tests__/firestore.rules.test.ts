@@ -174,6 +174,22 @@ describe('T91 · firestore.rules', () => {
     expect(block?.allows).toContain('allow read: if true')
     expect(block?.allows).toContain('allow write: if isAuthenticated()')
   })
+
+  /**
+   * T45 · RF-19.13: las reglas **no** hablan de `audit`, y este test está para que nadie las toque
+   * creyendo que una de ellas protege el registro de correcciones.
+   *
+   * No es una aspiración: las reglas de Firestore no distinguen campos dentro de un documento, así
+   * que `allow write` concede reescribir `audit[]` igual que concede corregir el marcador. Lo que
+   * sostiene la trazabilidad es el cliente —`TURN_PATCH_FIELDS`, el `expectedAuditCount` de
+   * RF-19.12 y el orden de las entradas— y está escrito en `AGENT.md` → Reglas de seguridad con su
+   * consecuencia asumida.
+   */
+  it('ninguna regla menciona el registro de correcciones', async () => {
+    const source = await rules()
+
+    expect(source).not.toMatch(/\baudit\b/)
+  })
 })
 
 /**

@@ -54,6 +54,9 @@ function turnInput(turnNo: number): CreateTurnInput {
     capturedBy: 'user-1',
     isRenchan: false,
     isFinalTurn: false,
+    discarderId: null,
+    chomboId: null,
+    yakuHanOverride: 0,
   }
 }
 
@@ -275,13 +278,34 @@ const SWEEP: SweepCase[] = [
       await turnsRepository.create(g1, turnInput(1))
     },
     writeNoBatch: async () => {
-      await turnsRepository.update(g1, 1, { honba: 2 })
+      await turnsRepository.update(g1, 1, { honba: 2 }, { by: 'user-2', expectedAuditCount: 0 })
     },
     writeInBatch: async (batch) => {
-      await turnsRepository.update(g1, 1, { honba: 2 }, batch)
+      await turnsRepository.update(
+        g1,
+        1,
+        { honba: 2 },
+        { batch, by: 'user-2', expectedAuditCount: 0 },
+      )
     },
-    beforeCommit: async () => (await field(`games/${g1}/turns/01`, 'honba')) === 0,
-    afterCommit: async () => (await field(`games/${g1}/turns/01`, 'honba')) === 2,
+    beforeCommit: async () => (await field(`games/${g1}/turns/1`, 'honba')) === 0,
+    afterCommit: async () => (await field(`games/${g1}/turns/1`, 'honba')) === 2,
+  },
+  {
+    name: 'turns.remove',
+    seed: async () => {
+      g1 = await gameSeed()
+      await turnsRepository.create(g1, turnInput(1))
+      await turnsRepository.create(g1, turnInput(2))
+    },
+    writeNoBatch: async () => {
+      await turnsRepository.remove(g1, 2)
+    },
+    writeInBatch: async (batch) => {
+      await turnsRepository.remove(g1, 2, batch)
+    },
+    beforeCommit: () => count(`games/${g1}/turns`) === 2,
+    afterCommit: () => count(`games/${g1}/turns`) === 1,
   },
 ]
 

@@ -8,9 +8,10 @@ import type { CreateGameInput, GameParticipant } from '@/data/games.repository'
 import { playersRepository } from '@/data/players.repository'
 import { seasonsRepository } from '@/data/seasons.repository'
 import { turnsRepository } from '@/data/turns.repository'
+import type { CreateTurnInput } from '@/data/turns.repository'
 import type { PlayerDelta, TurnValue } from '@/domain/turn'
 import { type Seat, toGameId, toPlayerId, toSeasonId } from '@/domain/types'
-import type { GameId, SeasonId } from '@/domain/types'
+import type { GameId, PlayerId, SeasonId } from '@/domain/types'
 import { fakeAdvanceSeconds, fakeNow, fakeReset } from '@/test-utils/fakeFirestore'
 import { withColada } from '@/test-utils/colada'
 
@@ -107,6 +108,9 @@ function tsumoTurn(
     capturedBy: 'user-1',
     isRenchan: false,
     isFinalTurn: turnNo === 4,
+    discarderId: null,
+    chomboId: null,
+    yakuHanOverride: 0,
   }
 }
 
@@ -176,14 +180,20 @@ describe('T67 · useGames', () => {
       const p1 = game.results.find((r) => r.playerId === table[0]?.playerId)
       const p4 = game.results.find((r) => r.playerId === table[3]?.playerId)
 
+      /**
+       * T31: el marcador sale de los turnos **re-derivados**, no de los que quedaron escritos. El
+       * fixture escribe unos deltas a mano que no son los que daría el motor —3 000 y −1 000 en vez
+       * de los 6 000 y −2 000 de una mano de 3 han y 30 fu—, así que las cifras nuevas son las
+       * correctas y las viejas eran las del atajo.
+       */
       expect(p1).toMatchObject({
         playerName: 'Ana',
-        finalScore: 37030,
+        finalScore: 50830,
         finalPosition: '1st',
         uma: 30,
         bankrupt: false,
       })
-      expect(p4).toMatchObject({ finalScore: 20970, finalPosition: '4th' })
+      expect(p4).toMatchObject({ finalScore: 16370, finalPosition: '4th' })
 
       const unstamped = await gamesRepository.getById(gameId)
 
@@ -195,13 +205,13 @@ describe('T67 · useGames', () => {
       await vi.waitFor(() => expect(result.stats.data.value).toHaveLength(4))
       const stat = result.stats.data.value?.find((entry) => entry.playerId === table[0]?.playerId)
 
-      expect(stat).toMatchObject({ actualPoints: 37030, gamesPlayed: 1, victories: 1 })
+      expect(stat).toMatchObject({ actualPoints: 50830, gamesPlayed: 1, victories: 1 })
       expect(stat?.positions?.['1st']).toBe(1)
 
       await vi.waitFor(() => expect(result.rankings.data.value).toHaveLength(4))
       const first = result.rankings.data.value?.find((entry) => entry.rank === 1)
 
-      expect(first).toMatchObject({ playerId: table[0]?.playerId, points: 37030 })
+      expect(first).toMatchObject({ playerId: table[0]?.playerId, points: 50830 })
     } finally {
       unmount()
     }
@@ -383,6 +393,151 @@ describe('T67 · useGames', () => {
       await expect(
         result.finalizeGame.mutateAsync({ gameId: toGameId('missing'), by: 'user-1' }),
       ).rejects.toMatchObject({ code: 'notFound' })
+    } finally {
+      unmount()
+    }
+  })
+})
+
+/**
+ * T31 · RF-18.12. El resultado final de una partida sale de los turnos **re-derivados**. Aquí el
+ * caso es de los que RF-18.7 vino a cerrar: cuatro empates cuyos deltas guardados son todos cero
+ * —nadie se movió— cuando un empate reparte 3 000 entre los tenpai.
+ */
+describe('T31 · finalsOf con turnos re-derivados', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  /**
+   * Un empate de captura cuyo `deltas` guardado **no** es el que saldría del motor. Los campos
+   * capturados sí son correctos, así que el recorrido los acepta y devuelve unos deltas distintos.
+   */
+  function flatDraw(
+    turnNo: number,
+    tenpai: readonly PlayerId[],
+    deltas: readonly PlayerDelta[],
+  ): CreateTurnInput {
+    return {
+      turnNo,
+      wind: 'east',
+      dealerId: PLAYERS[0]?.playerId ?? toPlayerId('p1'),
+      honba: 0,
+      resultType: 'ryuukyoku',
+      yaku: [],
+      yakuHan: 0,
+      doraCount: 0,
+      fu: 0,
+      tenpai,
+      riichiDeclaredBy: [],
+      riichiSticks: 0,
+      value: [],
+      deltas,
+      capturedBy: 'user-1',
+      isRenchan: false,
+      isFinalTurn: turnNo === 4,
+      discarderId: null,
+      chomboId: null,
+      yakuHanOverride: 0,
+    }
+  }
+
+  async function gameWithFlatDraws(): Promise<GameId> {
+    const game = await openGame()
+    const flat = PLAYERS.map((player) => ({ playerId: player.playerId, delta: 0 }))
+    const [east, south, west] = PLAYERS.map((player) => [player.playerId] as const)
+    const hands: readonly (readonly PlayerId[])[] = [
+      east ?? [],
+      south ?? [],
+      west ?? [],
+      east ?? [],
+    ]
+
+    for (const [index, tenpai] of hands.entries()) {
+      await turnsRepository.create(game.id, flatDraw(index + 1, tenpai, flat))
+    }
+
+    return game.id
+  }
+
+  it('el marcador final sale de los turnos re-derivados y no de los guardados', async () => {
+    const gameId = await gameWithFlatDraws()
+
+    const stored = await turnsRepository.list(gameId)
+    const { result, unmount } = withColada(() => useGames())
+
+    try {
+      // Lo guardado dice que nadie se movió: con eso la partida terminaría toda en 25 000.
+      expect(stored.flatMap((turn) => turn.deltas).every((delta) => delta.delta === 0)).toBe(true)
+
+      const game = await result.finalizeGame.mutateAsync({ gameId, by: 'user-1' })
+      const scoreOf = (seatIndex: number): number | undefined =>
+        game.results.find((entry) => entry.playerId === game.players[seatIndex]?.playerId)
+          ?.finalScore
+
+      // Este ganó dos empates y perdió dos; Sur y Oeste uno de cada; Norte ninguno.
+      expect(game.results.map((entry) => entry.finalScore)).toStrictEqual([
+        29030, 25010, 24990, 20970,
+      ])
+      expect(scoreOf(0)).toBe(29030)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('una partida que el recorrido no puede reproducir no se finaliza', async () => {
+    const gameId = await openGame().then((game) => game.id)
+    const flat = PLAYERS.map((player) => ({ playerId: player.playerId, delta: 0 }))
+
+    for (const turnNo of [1, 2, 3, 4]) {
+      await turnsRepository.create(gameId, {
+        ...flatDraw(turnNo, [], flat),
+        // Un ron sin descartador no se puede reconstruir: el recorrido lo rechaza con
+        // `incompleteTurn` y, sin ellos, la partida sería imposible de finalizar.
+        resultType: 'ron',
+        discarderId: null,
+      })
+    }
+
+    const { result, unmount } = withColada(() => useGames())
+
+    try {
+      const rejected = result.finalizeGame.mutateAsync({ gameId, by: 'user-1' })
+
+      await expect(rejected).rejects.toMatchObject({ code: 'replayInvalid' })
+      await expect(rejected).rejects.toThrow(/turno 1/)
+
+      const stored = await gamesRepository.getById(gameId)
+
+      expect(stored?.status).toBe('open')
+      expect(stored?.results).toStrictEqual([])
+      expect(stored?.finalizationAudit).toStrictEqual([])
+    } finally {
+      unmount()
+    }
+  })
+
+  it('abortar por debajo del mínimo no necesita que la partida sea reproducible', async () => {
+    const gameId = await openGame().then((game) => game.id)
+    const flat = PLAYERS.map((player) => ({ playerId: player.playerId, delta: 0 }))
+
+    for (const turnNo of [1, 2]) {
+      await turnsRepository.create(gameId, {
+        ...flatDraw(turnNo, [], flat),
+        resultType: 'ron',
+        discarderId: null,
+      })
+    }
+
+    const { result, unmount } = withColada(() => useGames())
+
+    try {
+      // Dos turnos están por debajo del mínimo de un tonpuusen: se aborta, y una partida
+      // abortada no calcula resultados, así que no hay nada que reproducir.
+      const game = await result.finalizeGame.mutateAsync({ gameId, by: 'user-1' })
+
+      expect(game.status).toBe('aborted')
+      expect(game.results).toStrictEqual([])
     } finally {
       unmount()
     }

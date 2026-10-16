@@ -4,7 +4,10 @@ import type { PlayerId, Seat } from './types'
 
 const SEAT_ORDER: Record<Seat, number> = { east: 0, south: 1, west: 2, north: 3 }
 const RIICHI_STICK_VALUE = 1000
-const CHOMBO_PENALTY = 8000
+const CHOMBO_TO_DEALER = 4000
+const CHOMBO_TO_NON_DEALER = 2000
+const CHOMBO_BY_DEALER = 12000
+const CHOMBO_BY_NON_DEALER = 8000
 const EXACT_DRAW_TOTAL = 3000
 const EXTENSION_PER_PAIR = 1000
 const MAX_RON_WINNERS = 3
@@ -86,13 +89,14 @@ export type SquareCheckInput = {
    * previo da un fallo falso: la ficha recién declarada sí sale de la mesa y vuelve al ganador.
    */
   readonly riichiSticksClaimedThisTurn: number
-  readonly chombos: number
 }
 
 export type SquareCheckResult =
   { readonly ok: true } | { readonly ok: false; readonly expected: number; readonly actual: number }
 
 type DrawTurnInput = Extract<TurnInput, { readonly resultType: 'ryuukyoku' }>
+
+type ChomboTurnInput = Extract<TurnInput, { readonly resultType: 'chombo' }>
 
 type Win = {
   readonly playerId: PlayerId
@@ -156,15 +160,16 @@ export function resolveTurn(input: TurnInput): TurnResult {
 
 /**
  * Invariante de cuadre (RF-4.1): la suma de los deltas de un turno no es cero porque las fichas
- * de riichi declaradas salen del marcador sin entrar en nadie y los 8000 del chombo se destruyen.
- * El bote que se reclama sí es neutro, y por eso se resta de lo declarado: cuenta las fichas
- * **de este turno**, incluida la que se declara en él, no solo las que ya había en la mesa.
+ * de riichi **no reclamadas** salen del marcador sin entrar en nadie. El bote que se reclama sí es
+ * neutro, y por eso se resta de lo declarado: cuenta las fichas **de este turno**, incluida la que se
+ * declara en él, no solo las que ya había en la mesa.
+ *
+ * El chombo **no aparece en la fórmula** porque su penalización se reparte entre la mesa: sale del
+ * infractor y entra en los demás, así que es neutra en la suma.
  */
 export function checkSquare(input: SquareCheckInput): SquareCheckResult {
   const actual = input.deltas.reduce((total, entry) => total + entry.delta, 0)
-  const expected =
-    -RIICHI_STICK_VALUE * (input.riichiDeclared - input.riichiSticksClaimedThisTurn) -
-    CHOMBO_PENALTY * input.chombos
+  const expected = -RIICHI_STICK_VALUE * (input.riichiDeclared - input.riichiSticksClaimedThisTurn)
 
   return actual === expected ? { ok: true } : { ok: false, expected, actual }
 }
@@ -292,10 +297,30 @@ function extraDelta(player: TurnPlayer, input: TurnInput): number {
   }
 
   if (input.resultType === 'chombo') {
-    return player.playerId === input.chomboId ? -CHOMBO_PENALTY : 0
+    return chomboDelta(player, input)
   }
 
   return 0
+}
+
+/**
+ * Chombo (RF-7.2 y RF-7.3): la penalización **se reparte entre la mesa** en vez de destruirse. Si
+ * quien abandona es el dealer son 12000 —4000 de cada rival— y si no lo es son 8000: 4000 al dealer y
+ * 2000 a cada uno de los otros dos no dealer. En ambos casos lo que sale del infractor entra entero en
+ * los demás, y por eso la suma de los cuatro deltas es cero.
+ */
+function chomboDelta(player: TurnPlayer, input: ChomboTurnInput): number {
+  const infractorIsDealer = input.chomboId === input.dealerId
+
+  if (player.playerId === input.chomboId) {
+    return infractorIsDealer ? -CHOMBO_BY_DEALER : -CHOMBO_BY_NON_DEALER
+  }
+
+  if (infractorIsDealer || player.playerId === input.dealerId) {
+    return CHOMBO_TO_DEALER
+  }
+
+  return CHOMBO_TO_NON_DEALER
 }
 
 /**

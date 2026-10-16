@@ -9,6 +9,7 @@ import type { GameRecord } from '@/data/games.repository'
 import { playersRepository } from '@/data/players.repository'
 import type { PlayerRecord } from '@/data/players.repository'
 import { turnsRepository } from '@/data/turns.repository'
+import { toPlayerId } from '@/domain/types'
 import type { PlayerId, Seat } from '@/domain/types'
 import {
   doc,
@@ -108,6 +109,9 @@ async function createTurns(
       capturedBy: 'cap-1',
       isRenchan: false,
       isFinalTurn: false,
+      discarderId: null,
+      chomboId: null,
+      yakuHanOverride: 0,
     })
   }
 }
@@ -299,5 +303,172 @@ describe('T86 · GameDetailPage', () => {
     await vi.waitFor(() => expect(wrapper.text()).toContain('Bancarrota'))
     expect(wrapper.text()).toContain('Finalizar')
     expect(wrapper.text()).not.toContain('Capturar turno')
+  })
+})
+
+/**
+ * T39 · RF-23.3. El detalle enseña la ronda, la localía y el honba de la mano siguiente **sin
+ * pedirlos a nadie**: los deriva `domain/replay.ts` y salen de la misma fuente que rellena el
+ * formulario, así que no pueden discrepar.
+ */
+describe('T39 · el detalle muestra el estado derivado', () => {
+  beforeEach(() => {
+    fakeReset()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    mounted?.unmount()
+    mounted = undefined
+  })
+
+  it('sin turnos muestra el estado inicial de la partida', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    const { wrapper } = mountPage(game.id)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
+
+    expect(wrapper.find('[data-test="next-wind"]').text()).toBe('Este')
+    expect(wrapper.find('[data-test="next-dealer"]').text()).toBe('Este')
+    expect(wrapper.find('[data-test="next-honba"]').text()).toBe('0')
+  })
+
+  it('con turnos muestra el estado que dejaría el último, no el del último', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    await createTurns(game, 1)
+
+    const { wrapper } = mountPage(game.id)
+
+    // El primer turno es un empate sin tenpai: la localía avanza y el contador vuelve a cero.
+    await vi.waitFor(() => expect(wrapper.find('[data-test="next-honba"]').text()).toBe('0'))
+
+    expect(wrapper.find('[data-test="next-dealer"]').text()).toBe('Sur')
+  })
+
+  it('no pide la ronda, la localía ni el honba en ninguna parte del detalle', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    await createTurns(game, 2)
+
+    const { wrapper } = mountPage(game.id)
+
+    await vi.waitFor(() => expect(wrapper.findAll('li').length).toBeGreaterThan(0))
+
+    expect(wrapper.find('select[name="dealerId"]').exists()).toBe(false)
+    expect(wrapper.find('select[name="wind"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="honba"]').exists()).toBe(false)
+  })
+})
+
+/**
+ * RF-19.10, que la tabla de trazabilidad asigna a T39. Una corrección que no se ve es una corrección
+ * que no ha pasado: quien lee el turno tiene que ver quién lo corrigió, cuándo y qué cambió, venga
+ * el registro del turno o el de la partida.
+ */
+describe('T39 · quién corrigió cada turno (RF-19.10)', () => {
+  beforeEach(() => {
+    fakeReset()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    mounted?.unmount()
+    mounted = undefined
+  })
+
+  it('un turno sin correcciones lo dice, y no enseña un registro vacío', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    await createTurns(game, 1)
+
+    const { wrapper } = mountPage(game.id)
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain('cap-1'))
+    expect(wrapper.findAll('[data-test="turn-audit"]')).toHaveLength(0)
+    expect(wrapper.find('li').text()).toContain('cap-1')
+  })
+
+  it('un turno corregido muestra quién, cuándo y qué cambió', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    await createTurns(game, 1)
+    fakeAdvanceSeconds(3600)
+
+    await turnsRepository.update(game.id, 1, { fu: 30 }, { by: 'cap-2', expectedAuditCount: 0 })
+    fakeAdvanceSeconds(60)
+
+    // El segundo cambio lo hizo el sistema, y el registro tiene que distinguirlo (RF-19.5).
+    await turnsRepository.update(
+      game.id,
+      1,
+      { honba: 1 },
+      { by: 'cap-3', expectedAuditCount: 1, derived: ['honba'] },
+    )
+
+    const { wrapper } = mountPage(game.id)
+
+    await vi.waitFor(() => expect(wrapper.findAll('[data-test="turn-audit"] li').length).toBe(2))
+
+    const audit = wrapper.find('[data-test="turn-audit"]').text()
+
+    expect(audit).toContain('cap-2')
+    expect(audit).toContain('cap-3')
+    expect(audit).toContain('Fu')
+    expect(audit).toContain('cambiado a mano')
+    expect(audit).toContain('calculado por el sistema')
+  })
+
+  it('el borrado de un turno sin anterior se lee en el registro de la partida', async () => {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    await createTurns(game, 2)
+    fakeAdvanceSeconds(3600)
+
+    await turnsRepository.remove(game.id, 1)
+    await gamesRepository.update(game.id, {
+      turnAudit: [
+        {
+          at: fakeNow(),
+          by: 'cap-2',
+          action: 'delete',
+          turnNo: 1,
+          before: {
+            turnNo: 1,
+            wind: 'east',
+            dealerId: game.players[0]?.playerId ?? toPlayerId('p1'),
+            honba: 0,
+            resultType: 'ryuukyoku',
+            yaku: [],
+            yakuHan: 0,
+            yakuHanOverride: 0,
+            doraCount: 0,
+            fu: 20,
+            tenpai: [],
+            riichiDeclaredBy: [],
+            riichiSticks: 0,
+            value: [],
+            deltas: [],
+            discarderId: null,
+            chomboId: null,
+            capturedBy: 'cap-1',
+            isRenchan: false,
+            isFinalTurn: false,
+          },
+        },
+      ],
+    })
+
+    const { wrapper } = mountPage(game.id)
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="game-turn-audit"]').exists()).toBe(true),
+    )
+
+    const audit = wrapper.find('[data-test="game-turn-audit"]')
+
+    expect(audit.text()).toContain('cap-2')
+    expect(audit.text()).toContain('1')
   })
 })

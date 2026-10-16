@@ -361,17 +361,17 @@ describe('T46 · resultado final con chombo y bancarrota', () => {
     resolve(drawInput([A, B, C, D])).deltas,
   ]
 
-  it('los marcadores se acumulan desde 25 000 y una partida con un chombo suma 92 000', () => {
+  it('los marcadores se acumulan desde 25 000 y una partida con un chombo conserva los 100 000', () => {
     const scoreA = playerScore(A, START_POINTS, turns)
     const scoreB = playerScore(B, START_POINTS, turns)
     const scoreC = playerScore(C, START_POINTS, turns)
     const scoreD = playerScore(D, START_POINTS, turns)
 
-    expect(scoreA).toBe(26500)
-    expect(scoreB).toBe(25500)
+    expect(scoreA).toBe(30500)
+    expect(scoreB).toBe(27500)
     expect(scoreC).toBe(16500)
-    expect(scoreD).toBe(23500)
-    expect(scoreA + scoreB + scoreC + scoreD).toBe(92000)
+    expect(scoreD).toBe(25500)
+    expect(scoreA + scoreB + scoreC + scoreD).toBe(100000)
   })
 
   it('el chombo viaja al resultado y la posición sigue al marcador', () => {
@@ -387,9 +387,9 @@ describe('T46 · resultado final con chombo y bancarrota', () => {
 
     expect(results.map((result) => result.playerId)).toStrictEqual([A, B, D, C])
     expect(aResult?.position).toBe('1st')
-    expect(aResult?.finalScore).toBe(26530)
+    expect(aResult?.finalScore).toBe(30530)
     expect(dResult?.position).toBe('3rd')
-    expect(dResult?.finalScore).toBe(23490)
+    expect(dResult?.finalScore).toBe(25490)
     expect(cResult?.chombo).toBe(true)
     expect(cResult?.finalScore).toBe(16470)
   })

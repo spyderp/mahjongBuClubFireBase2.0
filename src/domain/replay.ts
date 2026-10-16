@@ -58,6 +58,12 @@ export type ReplayOutcome = {
   readonly scores: readonly ReplayScore[]
   readonly mustFinalize: boolean
   readonly bankruptPlayerId: PlayerId | null
+  /**
+   * RF-23.3: el estado de la mano que se capturará a continuación —ronda, localía y honba—, que es
+   * lo que la interfaz muestra en lugar de pedirlo. Es el estado **después** del último turno, así
+   * que nunca coincide con el de ese turno salvo en una partida sin turnos, donde es el inicial.
+   */
+  readonly nextHand: HandState
 }
 
 export type ReplayRejection =
@@ -134,6 +140,7 @@ export function replayTurns(
       scores: table.map((player) => ({ playerId: player.playerId, score: player.score })),
       mustFinalize: bankruptPlayerId !== null,
       bankruptPlayerId,
+      nextHand: state,
     },
   }
 }
@@ -174,7 +181,6 @@ function resolveCaptured(
     deltas: resolution.deltas,
     riichiDeclared: captured.riichiDeclaredBy.length,
     riichiSticksClaimedThisTurn: claimed,
-    chombos: captured.resultType === 'chombo' ? 1 : 0,
   })
 
   if (!square.ok) {
@@ -261,6 +267,12 @@ function turnInput(
  * conserva la tenpai: la localía avanza y el honba sube.
  */
 function handOutcomeOf(captured: CapturedTurn, dealerId: PlayerId): HandOutcome {
+  if (captured.resultType === 'chombo') {
+    // RF-7.6: la mano se anula pero la localía no rota y el contador no se toca. No es un renchan
+    // porque no hubo mano jugada.
+    return { type: 'chombo' }
+  }
+
   if (isWin(captured.resultType)) {
     return captured.winners.includes(dealerId) ? { type: 'dealerWin' } : { type: 'otherWin' }
   }

@@ -238,7 +238,7 @@ el riesgo que queda asumido.
 | --- | --- | --- | --- | --- |
 | 1 | El sistema calcula el valor de la mano | Que quien captura introduzca los puntos y el motor solo avise si el número es inverosímil | Con los puntos tecleados el motor no añade nada: es el error de siempre con un formulario delante. RF-16.2 | El recuento de dora no es verificable sin las fichas. Declarado en `spec.md` §7 |
 | 2 | Los deltas se derivan del valor de mano y nunca se teclean | Teclear deltas y usar `handValue` solo como verificación | Si el delta es entrada, la validación es tautológica y el motor queda como adorno | Ninguno: es la única forma de que RF-16.1 signifique algo |
-| 3 | El chombo es un delta de −8000 en su turno y no interrumpe la partida | (a) Que el abandono aborte la partida; (b) penalización solo en `results[]` al finalizar | (a) pierde los resultados de una partida jugada entera y hace el contador `chombo` inalcanzable; (b) saca el castigo de la traza turno a turno, que es lo que RNF-2 exige | La suma de la partida es 92 000 y no 100 000. Declarado en RF-7.5 y `../../docs/domain.md §5` |
+| 3 | El chombo es un delta de −8000 en su turno y no interrumpe la partida | (a) Que el abandono aborte la partida; (b) penalización solo en `results[]` al finalizar | (a) pierde los resultados de una partida jugada entera y hace el contador `chombo` inalcanzable; (b) saca el castigo de la traza turno a turno, que es lo que RNF-2 exige | La suma de la partida es 92 000 y no 100 000. Declarado en RF-7.5 y `../../docs/domain.md §5` — **SUPERADA**, ver nota de abajo |
 | 4 | La bancarrota termina la partida y **computa** en el ranking | (a) Permitir saldo negativo; (b) recortar al saldo disponible; (c) acabar como inconclusa | (a) deja seguir jugando con un jugador bajo cero, que el reglamento no contempla; (b) hace que la penalización dependa del estado previo y obliga a reescribir «8000»; (c) tira una partida casi entera | El saldo negativo solo existe como valor terminal. `mustFinalize` bloquea turnos nuevos mientras tanto |
 | 5 | `abortada` es terminal | (a) Recuperable al registrar los turnos que faltan; (b) simple rechazo sin estado | El argumento de §1 de la spec es que forzar un cierre produce datos inventados; (a) deja el mismo camino abierto por el otro lado | **Un clic accidental en finalizar condena la partida para siempre.** Mitigación: RF-9.1 exige confirmación previa |
 | 6 | El desempate dentro de la partida es por asiento, de Este a Norte | (a) Alfabético por nombre; (b) repartir el uma entre los empatados | Con el uma puntuando, el empate del bruto decide entre +30 y +10: hasta 20 000 puntos. (a) hace depender el resultado de cómo se escribieron los nombres y choca con RNF-1; (b) produce umas que no son del reglamento y rompe el criterio de ejemplo único | En toda partida empatada el asiento de Este va por delante. Es arbitrario, pero declarado y estable |
@@ -248,6 +248,29 @@ el riesgo que queda asumido.
 | 10 | No hay doble yakuman, y 13 han normales sí es yakuman | (a) Dobles para suucha riichi, suukantsu y daisuushii; (b) 13 han sigue siendo sanbaiman | El material solo traía un nivel. (a) puntúa cuatro riichi como un kokushi; (b) contradice el propio dato | Una mano con cuatro yaku de límite puntúa como uno. El contador `yakuman` cuenta manos, no yaku |
 | 11 | El double riichi no se reconoce | Incluirlo en la lista de yaku con sus 2 han | `../../AGENT.md` y `../../docs/domain.md` lo declaraban no-objetivo; mantenerlo evita tocar dos documentos por una decisión de captura | 1 han menos en esas manos. Desviación nº 3 |
 | 12 | RNF-5 con la caché local persistente de Firestore | (a) Cola propia con service worker e IndexedDB; (b) reducir RNF-5 a tolerancia a cortes | El SDK instalado ya trae la caché persistente: cero dependencias nuevas y por tanto sin conflicto con `../../AGENT.md` → Rules. (b) devuelve al club a la memoria cuando falla la red, que es justo lo que RNF-5 quiere evitar | El conflicto entre dos dispositivos lo resuelve el rechazo del turno duplicado: una de las dos capturas se pierde. Declarado en RF-15.6 |
+
+### 5.2 Corrección posterior de la decisión 3 (chombo)
+
+La decisión 3 de arriba estaba bien razonada **para un chombo que no se reparte**, pero partía de que
+los 8000 no tenían a quién pagar. El reglamento de referencia sí lo tiene, así que la decisión
+repartió el castigo a destiempo: un infractor perdía 8000 y la partida perdía 8000, cuando lo correcto
+es que la mesa los cobre. El club confirmó además dos cosas que 001 dio por buenas: **la localía no rota**
+y **el contador no se toca**.
+
+Superada y sustituida por las decisiones 28, 29 y 30 de `spec.md` §6, que reescriben **RF-4.1**, **RF-7.2**
+a **RF-7.8** y los casos 24 y 50 a 52. Lo que **no** cambia: el chombo se aplica en su propio turno y no
+interrumpe la partida.
+
+Lo que arrastró la corrección, y que estaba repartido por más sitios de los previstos:
+
+- `checkSquare` pierde el término del chombo: la penalización se conserva y es neutra en la suma.
+- `docs/domain.md` §5 «Conservación de los puntos» se queda con **un** motivo en vez de dos, y
+  `../../AGENT.md` deja de advertir que «ni el bote de riichi ni el chombo van a ningún jugador».
+- El mensaje de rechazo al capturar un turno descuadrado (`src/i18n/locales/es.ts`) ya no menciona los
+  chombos.
+- `results[].chombo` se pasa a leer del infractor del turno. Antes se deducía de «quién aparece entre sus
+  deltas», que solo funcionaba porque el infractor era el único en cobrarlos; al repartir, **los cuatro**
+  habrían quedado marcados como chombo en las estadísticas del club.
 
 ### 5.1 Decisiones de estructura de código
 

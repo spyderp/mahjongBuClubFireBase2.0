@@ -1,6 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { DataErrorCode } from '@/data/errors'
+import { ERROR_KEYS } from '@/data/errors'
 import catalogo from '@/i18n/locales/es'
 import type { MessageCatalog } from '@/i18n/locales/es'
 import { MARKER, markerMessages } from '@/test-utils/i18n'
@@ -8,6 +10,22 @@ import { MARKER, markerMessages } from '@/test-utils/i18n'
 const BASE = join(import.meta.dirname, '..', 'components')
 
 const REQUIRED_GROUPS = ['errors', 'uma', 'yaku', 'handValue'] as const
+
+/**
+ * T33 · RF-19.12, RF-19.14, RF-19.15, RF-21.5. Los **cuatro rechazos nuevos** de `specs/002`, más
+ * los que la fase 5 añadió al cerrar T28 a T32: la partida no reproducible, la partida marcada por
+ * bancarrota y el borrado que no es el último. Un rechazo sin clave se muestra con la propia ruta de
+ * la clave en pantalla, y en la mesa eso es un error sin explicar.
+ */
+const NEW_TURN_ERRORS: readonly DataErrorCode[] = [
+  'conflict',
+  'auditFull',
+  'staleLocal',
+  'suufonRejected',
+  'replayInvalid',
+  'gameMarked',
+  'notLastTurn',
+]
 
 describe('T72 · catálogo i18n (es)', () => {
   it('define los grupos base exigidos con todos sus valores como texto', () => {
@@ -61,10 +79,85 @@ describe('T72 · catálogo i18n (es)', () => {
   })
 })
 
+/** T33: cada rechazo que la pantalla de captura puede mostrar tiene su propia clave. */
+describe('T33 · claves de los rechazos de specs/002', () => {
+  it('todo DataErrorCode tiene su clave, y la clave existe en el catálogo', () => {
+    for (const code of Object.keys(ERROR_KEYS) as readonly DataErrorCode[]) {
+      expect(typeof messageAt(ERROR_KEYS[code]), `sin clave: ${code}`).toBe('string')
+    }
+  })
+
+  it('los siete rechazos nuevos tienen su clave en errors.turn', () => {
+    for (const code of NEW_TURN_ERRORS) {
+      const entry = Object.entries(catalogo.errors.turn).find(([key]) => key === code)
+
+      expect(entry, `sin clave: ${code}`).toBeDefined()
+      expect(entry?.[1].trim().length, `mensaje corto: ${code}`).toBeGreaterThan(10)
+      expect(ERROR_KEYS[code], `ERROR_KEYS no apunta a errors.turn: ${code}`).toBe(
+        `errors.turn.${code}`,
+      )
+    }
+  })
+
+  it('replayInvalid nombra el turno que la hace inviable, y con parámetro', () => {
+    expect(catalogo.errors.turn.replayInvalid).toContain('{turn}')
+  })
+
+  it('los rechazos de la captura que ya existían siguen teniendo su clave', () => {
+    for (const code of [
+      'duplicateNumber',
+      'gapInSequence',
+      'notSquare',
+      'noYaku',
+      'windYaku',
+      'chiiFu',
+      'notRepresentable',
+      'moreThanThreeWinners',
+      'rulesetUnsupported',
+    ] as const) {
+      expect(catalogo.errors.turn, `sin clave: ${code}`).toHaveProperty(code)
+    }
+  })
+
+  it('el estado de la mano siguiente tiene sus tres campos y su título', () => {
+    expect(Object.keys(catalogo.turnForm.nextHand)).toStrictEqual([
+      'title',
+      'roundWind',
+      'dealerSeat',
+      'honba',
+    ])
+  })
+
+  it('la captura de una mano won tiene sus textos de desglose y de ajuste', () => {
+    expect(catalogo.turnForm.yakuHan).toBeTypeOf('string')
+    expect(catalogo.turnForm.yakuHanOverride).toBeTypeOf('string')
+    expect(catalogo.turnForm.catalogTotal).toBeTypeOf('string')
+    expect(catalogo.turnForm.overrideNotice).toContain('{delta}')
+    expect(catalogo.turnForm.breakdown).toBeTypeOf('string')
+    expect(catalogo.turnForm.winners).toBeTypeOf('string')
+    expect(catalogo.turnForm.addWinner).toBeTypeOf('string')
+  })
+})
+
 function expectAllLeavesAreText(catalog: MessageCatalog): void {
   forEachLeaf(catalog, (value) => {
     expect(typeof value).toBe('string')
   })
+}
+
+/** El mensaje que hay en `catalogo` bajo una ruta con puntos, sea del tamaño que sea. */
+function messageAt(key: string): unknown {
+  let node: unknown = catalogo
+
+  for (const segment of key.split('.')) {
+    if (typeof node !== 'object' || node === null) {
+      return undefined
+    }
+
+    node = (node as Record<string, unknown>)[segment]
+  }
+
+  return node
 }
 
 function forEachLeaf(catalog: MessageCatalog, visit: (value: string) => void): void {

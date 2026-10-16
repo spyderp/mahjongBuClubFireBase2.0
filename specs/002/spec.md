@@ -151,14 +151,15 @@ cuatro ganadores por tsumo. **No alcanza a `tenhou` ni a `chiihou`**: un dealer 
 en la primera Lama sin que la completen los otros tres, así que los dos yaku de límite siguen siendo
 capturables. Lo que deja de existir es únicamente el caso **simultáneo**.
 
-Además, 002 altera cinco reglas del modelo de datos. Las cuatro primeras están en `AGENT.md` → Data model
-y la quinta en `docs/domain.md`; todas se declaran aquí:
+Además, 002 altera seis reglas del modelo de datos. Las cinco primeras están en `AGENT.md` → Data model
+y la sexta en `docs/domain.md`; todas se declaran aquí:
 
 | Documento | Qué dice hoy | Qué pasa |
 | --------- | ------------ | -------- |
 | **`AGENT.md` → Data model, `turns/{turnNo}`** | «ID como string con relleno a dos dígitos, para que el orden lexicográfico sea el cronológico» | El identificador pasa a ser el número del turno **sin relleno**, y el orden lo fija el campo numérico; RF-20 |
 | **`AGENT.md` → Data model, `turns/{turnNo}`** | La lista de campos termina en `capturedBy`, `isRenchan`, `isFinalTurn` y `createdAt` | Se añaden **`updatedBy`**, **`updatedAt`** y **`audit[]`**; RF-19.2, RF-19.3 y RF-19.4 |
 | **`AGENT.md` → Data model, `turns/{turnNo}`** | El turno guarda `yakuHan` como dato de entrada | `yakuHan` pasa a ser **derivado** y el ajuste a mano se guarda aparte; RF-22.9 |
+| **`AGENT.md` → Data model, `turns/{turnNo}`** | La lista de campos no tiene **`discarderId`** ni **`chomboId`** | Se añaden los dos como **captura**, a `null` cuando el turno no es de ese tipo. Sin ellos un ron o un chombo guardado no se puede volver a resolver, porque el recorrido los necesita para reconstruir la mano; RF-18.13 |
 | **`AGENT.md` → Data model, `games/{gameId}`** | La lista de campos incluye `finalizationAudit[]` | Se añade **`turnAudit[]`**, que solo recibe el registro de borrados sin turno anterior; RF-19.7 |
 | **`AGENT.md` → Data model, `games.finalizationAudit[]`** | «`{ at, by, action, reason? }`» | **No cambia.** El registro de correcciones de los turnos es otro documento con otra forma, y ambos conviven sin mezclarse; RF-19 |
 
@@ -179,12 +180,15 @@ hay que derivarlo una sola vez y re-derivarlo cuando cambia algo.
   turnos anteriores*, y *no debe exigirlos como datos de entrada* del turno.
 - **RF-18.2** El primer turno de una partida *debe empezar en ronda de Este, con el asiento Este como
   localía y honba 0*, de modo que el primer dealer es quien ocupa el asiento Este.
-- **RF-18.3** Si *el dealer gana la mano*, el sistema *debe poner el honba a cero y mantener la localía*.
+- **RF-18.3** Si *el dealer gana la mano*, el sistema *debe mantener la localía y aumentar el honba en
+  uno*.
 - **RF-18.4** Si *el dealer hace empate y conserva la tenpai*, el sistema *debe mantener la localía y
   aumentar el honba en uno*.
-- **RF-18.5** Si *el dealer no conserva la tenpai*, el sistema *debe aumentar el honba en uno y avanzar
+- **RF-18.5** Si *el dealer no conserva la tenpai*, el sistema *debe poner el honba a cero y avanzar
   la localía al siguiente asiento*, y *cuando la localía vuelva al asiento Este debe hacer avanzar
   también el viento de ronda al siguiente viento*.
+- **RF-18.5b** Si *se registra un chombo*, el sistema ***no debe alterar ni el honba ni la localía ni el
+  viento de ronda***: la mano se vuelve a repartir desde el mismo estado (**RF-7.6** de `../001/spec.md`).
 - **RF-18.6** Si *el viento de ronda avanza más allá de Norte*, el sistema *debe devolverlo a Este*.
 - **RF-18.7** Si *se corrige un turno ya guardado*, el sistema *debe volver a derivar todos los turnos
   posteriores de esa partida* y *debe reescribirlos en la misma operación*.
@@ -243,6 +247,16 @@ hay que derivarlo una sola vez y re-derivarlo cuando cambia algo.
 > partida se prolonga por encima del mínimo. Modelar el final de ronda es una decisión de reglas que el
 > club todavía no ha tomado, y por eso queda en §7 como diferido con motivo, no como comportamiento
 > heredado.
+
+> **Cambio de dirección del contador, 2026-10-15.** RF-18.3 y RF-18.5 trading sus sentidos original:
+> el honba contaba **las manos que el dealer no ganaba** y el club lo invirtió al de **las manos que el
+> dealer lleva ganando**, que es como funciona en el reglamento de referencia. La consecuencia es que el
+> contador **sube cuando la localía se conserva** y vuelve a cero cuando se pierde, así que la regla se
+> reduce a una sola frase: *renchan sube el contador, perder la localía lo pone a cero*. Antes hacía
+> falta separar `dealerWin` de `dealerTenpaiDraw` porque el empate con tenpai sumaba y la victoria no.
+> RF-18.5b es el tercer caso: el chombo conserva la localía **pero no sube el contador**, así que no cabe
+> ni en RF-18.3/18.4 ni en RF-18.5 y necesita su propio resultado de mano. Ver `docs/domain.md` §4.5
+> desviación 8.
 
 ---
 
@@ -427,16 +441,18 @@ constancia, el rastro que RNF-2 promete no existe.
 
 1. **Primer turno de la partida.** Ronda Este, localía Este, honba 0, y el dealer es quien ocupa el
    asiento Este.
-2. **El dealer gana por tsumo.** El honba vuelve a cero y la localía se mantiene.
-3. **El dealer gana por ron.** Igual que por tsumo: honba 0 y localía mantenida.
+2. **El dealer gana por tsumo.** Renchan: la localía se mantiene y el honba aumenta en uno.
+3. **El dealer gana por ron.** Igual que por tsumo: localía mantenida y honba en uno.
 4. **El dealer hace empate con tenpai.** Renchan: la localía se mantiene y el honba aumenta en uno.
-5. **Gana un jugador que no es dealer.** El honba aumenta en uno y la localía avanza al siguiente
-   asiento.
+5. **Gana un jugador que no es dealer.** La localía avanza al siguiente asiento y el honba vuelve a
+   cero.
 6. **Cuarta localía de la ronda.** Cuando la localía vuelve al asiento Este, el viento de ronda avanza al
    siguiente viento.
-7. **Cinco renchan seguidos.** El dealer conserva la localía todo el rato y el honba se reinicia cada
-   vez que gana.
+7. **Cinco renchan seguidos.** El dealer conserva la localía todo el rato y el contador sube en cada
+   renchan, así que el turno 5 se juega con honba 4.
 8. **El viento de ronda pasa de Norte.** Vuelve a Este y el ciclo se repite.
+9. **Chombo con honba activo.** La localía no avanza y el contador se queda en el valor que tuviera,
+   así que la mano siguiente se reparte con el mismo dealer y el mismo honba.
 
 ### Corrección
 
@@ -588,8 +604,8 @@ comprobable por un test, no por lectura del código.
 
 4. Corregir un turno que cambia el ganador, el bote o el tipo de resultado reescribe los turnos
    posteriores, y la suma de deltas de la partida vuelve a cuadrar con la fórmula de conservación de
-   puntos de `docs/domain.md` §5: 100 000 menos 8 000 por cada chombo y menos 1 000 por cada ficha de
-   riichi sin reclamar.
+   puntos de `docs/domain.md` §5: 100 000 menos 1 000 por cada ficha de riichi sin reclamar. El chombo
+   ya no aparece en la fórmula porque su penalización se reparte entre los demás jugadores.
 5. Borrar un turno re-deriva todos los posteriores, y el estado resultante es el de una partida en la que
    ese turno nunca se hubiera capturado.
 6. Una corrección que deja un turno posterior inválido se rechaza entera, **no escribe ningún turno** y

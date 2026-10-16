@@ -148,9 +148,13 @@ export function tsumoPayment(hand: HandValue, context: PaymentContext): TsumoPay
 }
 
 /**
- * Combinaciones de han y fu no representables en la tabla (RF-4.4): 20 fu solo existen
- * por pinfu, que exige tsumo, y el tsumo de chiitoitsu siempre suma menzen tsumo y por
- * eso puntúa 3 han o más.
+ * Combinaciones de han y fu no representables en la tabla (RF-4.4): un ron no puede tener 20 fu
+ * porque el pinfu por ron son 30 —corrección del 2026-10-15 sobre un dato que las reglas no
+ * tenían—, así que los 20 fu planos solo existen por pinfu y solo por tsumo. El tsumo de chiitoitsu
+ * siempre lleva *menzen tsumo* y por eso puntúa 3 han o más.
+ *
+ * El motivo se llama `pinfuOnlyByTsumo` porque así lo nombra RF-4.4 de `specs/001`; lo que exige
+ * es que un ron no baje de 30 fu, no que el pinfu no se pueda ganar por ron.
  */
 export function validateRepresentable(input: {
   readonly han: number
