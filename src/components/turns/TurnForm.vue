@@ -5,17 +5,20 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import type { SelectOption } from '@/components/ui/BaseSelect.vue'
+import HelpModal from '@/components/turns/HelpModal.vue'
+import ScoreTableModal from '@/components/turns/ScoreTableModal.vue'
 import { useGameTurns } from '@/composables/useGameTurns'
 import type { TurnDraft } from '@/composables/useGameTurns'
+import { usePlayers } from '@/composables/usePlayers'
 import { DataError, ERROR_KEYS } from '@/data/errors'
 import type { CreateTurnInput, TurnRecord } from '@/data/turns.repository'
 import { validateRepresentable } from '@/domain/handValue'
-import type { HandResultType } from '@/domain/handValue'
+import type { HandResultType, HandValueInput } from '@/domain/handValue'
 import { isRenchan, minTurns } from '@/domain/rules'
 import type { HandOutcome } from '@/domain/rules'
 import { checkSquare, resolveTurn } from '@/domain/turn'
-import type { TurnPlayer, TurnResolution, TurnWinnerInput } from '@/domain/turn'
-import type { PlayerId, ResultType, Seat } from '@/domain/types'
+import type { TurnInput, TurnPlayer, TurnResolution, TurnWinnerInput } from '@/domain/turn'
+import type { PlayerId, ResultType, Seat, Wind } from '@/domain/types'
 import { sumYakuHan, validateChiitoitsuFu, validateWindYaku, YAKU_CATALOG } from '@/domain/yaku'
 import type { YakuCondition, YakuId } from '@/domain/yaku'
 import type { GameRecord } from '@/data/games.repository'
@@ -30,8 +33,9 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 const session = useSessionStore()
+const { data: clubPlayers } = usePlayers()
 const {
   data: turns,
   nextHand,
@@ -71,12 +75,18 @@ const winnerIds = ref<PlayerId[]>([])
 const discarderId = ref<PlayerId | ''>('')
 const winnerToAdd = ref('')
 const selectedYaku = ref<YakuId[]>([])
+const yakuFilter = ref('')
 const yakuHanOverride = ref('0')
 const doraCount = ref('0')
 const fu = ref('20')
 const tenpai = ref<PlayerId[]>([])
+
 const chomboId = ref<PlayerId | ''>('')
 const riichiPlayers = ref<PlayerId[]>([])
+
+/** RF-28.1 y RF-28.4: los dos modales de consulta no capturan nada, solo se abren y se cierran. */
+const helpOpen = ref(false)
+const scoreTableOpen = ref(false)
 
 const errors = reactive<{ field: string | null; global: string | null }>({
   field: null,
@@ -109,10 +119,183 @@ const players = computed<readonly TurnPlayer[]>(() =>
   })),
 )
 
+/**
+ * RF-24.1: el **nombre** del jugador, no solo su asiento. Si no está en la lista del club —un
+ * invitado, o un turno escrito antes de que se le diera de alta— se cae al identificador, que al
+ * menos señala a alguien concreto en vez de dejar la etiqueta en blanco.
+ */
+const playerNames = computed<ReadonlyMap<PlayerId, string>>(
+  () => new Map((clubPlayers.value ?? []).map((player) => [player.id, player.name])),
+)
+
+/**
+ * La mano tal y como la describe el formulario: lo marcado más el ajuste. Es lo que se envía a
+ * `resolveTurn`, y también lo que la mesa previsualiza.
+ */
+function currentHand(): HandValueInput {
+  return {
+    yaku: [...selectedYaku.value],
+    yakuHan: totalHan.value,
+    doraCount: Number(doraCount.value),
+    fu: Number(fu.value),
+  }
+}
+
+/**
+ * El turno que el formulario describe ahora mismo, listo para `resolveTurn`, o `null` si todavía no
+ * hay uno: sin tipo de resultado, sin ganador, sin descartador en un ron, sin tenpai en un empate o
+ * sin chombo en un chombo.
+ *
+ * Se construye **sin** las validaciones de negocio de `handleSubmit` a propósito: la mesa tiene que
+ * poder enseñar los pagos de una mano que luego se va a rechazar por otra cosa —por ejemplo, que su
+ * combinación de han y fu no esté en la tabla—. Rechazar antes de dibujar sería dejar la mesa muda
+ * justo cuando hace falta leer la cifra.
+ */
+function currentTurnInput(): TurnInput | null {
+  if (dealerId.value === '') {
+    return null
+  }
+
+  const base = {
+    players: players.value,
+    dealerId: dealerId.value as PlayerId,
+    honba: honba.value,
+    riichiDeclaredBy: [...riichiPlayers.value],
+    riichiSticksBefore: riichiSticksBefore.value,
+  }
+
+  if (isWin.value) {
+    if (winnerIds.value.length === 0) {
+      return null
+    }
+
+    const hand = currentHand()
+    const winners: readonly TurnWinnerInput[] = winnerIds.value.map((playerId) => ({
+      playerId,
+      hand,
+    }))
+
+    if (resultType.value === 'ron') {
+      return discarderId.value === ''
+        ? null
+        : { ...base, resultType: 'ron', winners, discarderId: discarderId.value as PlayerId }
+    }
+
+    return { ...base, resultType: 'tsumo', winners }
+  }
+
+  if (isDraw.value) {
+    return tenpai.value.length === 0
+      ? null
+      : { ...base, resultType: 'ryuukyoku', tenpai: [...tenpai.value] }
+  }
+
+  if (isChombo.value && chomboId.value !== '') {
+    return { ...base, resultType: 'chombo', chomboId: chomboId.value }
+  }
+
+  return null
+}
+
+/**
+ * Resuelve el turno en curso. Lo usa `handleSubmit` para guardar y la mesa para previsualizar, y
+ * ambos leen **la misma cuenta**: si la mesa dibujara unos pagos distintos de los que se guardan,
+ * la pantalla estaría enseñando una cosa y escribiendo otra.
+ *
+ * Cuando el turno aún no se puede resolver devuelve `null`, que en el guardar es un rechazo y en la
+ * mesa es «no hay diferencia que pintar».
+ */
+function resolveInputOf(input: TurnInput | null): ReturnType<typeof resolveTurn> | null {
+  if (input === null) {
+    return null
+  }
+
+  return resolveTurn(input)
+}
+
+/** El turno en curso ya resuelto, o `null` mientras no se pueda resolver. */
+const currentTurn = computed<TurnResolution | null>(() => {
+  const outcome = resolveInputOf(currentTurnInput())
+
+  return outcome?.ok ? outcome.resolution : null
+})
+
+/**
+ * Lo que este turno suma y resta a cada jugador, indexado por su identificador.
+ */
+const currentDeltas = computed<ReadonlyMap<PlayerId, number>>(
+  () => new Map((currentTurn.value?.deltas ?? []).map((delta) => [delta.playerId, delta.delta])),
+)
+
+/** Una fila de la mesa: lo que RF-24 pide ver de cada jugador de una sentada. */
+type MesaRow = {
+  readonly playerId: PlayerId
+  readonly seat: Seat
+  readonly name: string
+  /** El viento de la mano en curso (RF-24.4): el mismo para los cuatro, y el que gira la vuelta. */
+  readonly wind: Wind
+  readonly score: number
+  readonly delta: number
+  readonly deltaText: string
+  readonly deltaClass: string
+  /** La localía **real** del turno que se está capturando, no el asiento Este (RF-24.3). */
+  readonly isDealer: boolean
+}
+
+/**
+ * RF-24 · La mesa. Los cuatro requisitos de `specs/003` caen en este único `computed`, y por eso van
+ * juntos: separarlos produciría cuatro commits que rompen el mismo fichero (`plan.md` §5.2,
+ * decisión 6).
+ *
+ * El marcador de la izquierda es el **acumulado** de los turnos guardados —dónde está cada uno en la
+ * mesa— y la diferencia de la derecha es la del turno que se está **capturando**, la que va a sumar o
+ * restar la mano que se está rellenando. No es la misma cifra y no debe serlo: mostrar la acumulada
+ * haría que quien captura viera un número que no va a guardar, y una diferencia que incluye manos
+ * anteriores no dice nada de la que tiene delante.
+ *
+ * Mientras el turno no se pueda resolver no hay diferencia que pintar, y la mesa no inventa ninguna:
+ * todos los ceros salen sin color (casos límite 1 y 2).
+ */
+const mesa = computed<readonly MesaRow[]>(() =>
+  players.value.map((player) => {
+    const delta = currentDeltas.value.get(player.playerId) ?? 0
+
+    return {
+      playerId: player.playerId,
+      seat: player.seat,
+      name: playerNames.value.get(player.playerId) ?? player.playerId,
+      wind: roundWind.value,
+      score: player.score,
+      delta,
+      deltaText: delta > 0 ? `+${n(delta, 'points')}` : n(delta, 'points'),
+      deltaClass: deltaClassOf(delta),
+      isDealer: player.playerId === dealerId.value,
+    }
+  }),
+)
+
+/**
+ * RF-24.2: el color sale de los **tokens del tema** —`--color-mahjong-positive` y
+ * `--color-mahjong-negative`, 003-qa.md D1— y de ninguna otra clase. El cero se queda sin clase: un
+ * empate repartido deja a alguien con diferencia cero, y ese jugador no va en ningún color (caso
+ * límite 2).
+ */
+function deltaClassOf(delta: number): string {
+  if (delta > 0) {
+    return 'text-mahjong-positive'
+  }
+
+  if (delta < 0) {
+    return 'text-mahjong-negative'
+  }
+
+  return ''
+}
+
 const playerOptions = computed<readonly SelectOption[]>(() =>
   table.value.map((player) => ({
     value: player.playerId,
-    label: t(`gamesView.seats.${player.seat}`),
+    label: playerLabel(player.playerId),
   })),
 )
 
@@ -127,6 +310,26 @@ const resultTypeOptions = computed<readonly SelectOption[]>(() =>
 const yakuOptions = computed<readonly SelectOption[]>(() =>
   YAKU_CATALOG.map((definition) => ({ value: definition.id, label: t(`yaku.${definition.id}`) })),
 )
+
+/**
+ * RF-25.1: el buscador deja solo las entradas cuyo nombre **contiene** lo escrito, sin distinguir
+ * mayúsculas ni espacios alrededor. El catálogo son 46 nombres y quien captura busca «riic» o
+ * «chanta» medio en inglés: recorrerlos a ojo para marcar cuatro yaku es el trabajo que el
+ * requisito viene a quitar.
+ *
+ * Filtra **la lista**, nunca la captura: lo marcado sigue en `selectedYaku` aunque no se vea, así que
+ * un filtro sin coincidencia no puede hacer perder lo que ya había. Por eso el total del catálogo no
+ * se mueve al escribir.
+ */
+const visibleYakuOptions = computed<readonly SelectOption[]>(() => {
+  const needle = yakuFilter.value.trim().toLowerCase()
+
+  if (needle === '') {
+    return yakuOptions.value
+  }
+
+  return yakuOptions.value.filter((option) => option.label.toLowerCase().includes(needle))
+})
 
 const isWin = computed(() => resultType.value === 'tsumo' || resultType.value === 'ron')
 const isDraw = computed(() => resultType.value === 'ryuukyoku')
@@ -164,7 +367,7 @@ const winnerOptions = computed<readonly SelectOption[]>(() =>
     )
     .map((player) => ({
       value: player.playerId,
-      label: t(`gamesView.seats.${player.seat}`),
+      label: playerLabel(player.playerId),
     })),
 )
 
@@ -173,7 +376,7 @@ const discarderOptions = computed<readonly SelectOption[]>(() =>
     .filter((player) => !winnerIds.value.includes(player.playerId))
     .map((player) => ({
       value: player.playerId,
-      label: t(`gamesView.seats.${player.seat}`),
+      label: playerLabel(player.playerId),
     })),
 )
 
@@ -238,10 +441,60 @@ function seatOf(playerId: PlayerId): Seat | undefined {
   return table.value.find((player) => player.playerId === playerId)?.seat
 }
 
-function labelOf(playerId: PlayerId): string {
+/**
+ * Viento que le corresponde a un asiento según la localía: el repartidor es Este y los
+ * demás se reparten en sentido antihorario (sur, oeste, norte) desde su posición.
+ */
+function windOfSeatRelativeToDealer(
+  seat: Seat | undefined,
+  dealerSeat: Seat | undefined,
+): Seat | undefined {
+  if (seat === undefined || dealerSeat === undefined) {
+    return undefined
+  }
+
+  const seatMap: Record<Seat, number> = {
+    east: 0,
+    south: 1,
+    west: 2,
+    north: 3,
+  }
+
+  const seats: Seat[] = ['east', 'south', 'west', 'north']
+
+  const seatIndex = seatMap[seat]
+  const dealerSeatIndex = seatMap[dealerSeat]
+
+  // Distancia modular antihoraria (el +4 evita índices negativos)
+  const windIndex = (seatIndex - dealerSeatIndex + 4) % 4
+
+  return seats[windIndex]
+}
+
+/** Etiqueta traducida del viento de un asiento; cae al propio asiento si no hay localía. */
+function windLabel(seat: Seat): string {
+  const dealerSeat = dealerId.value === '' ? undefined : seatOf(dealerId.value)
+  const wind = windOfSeatRelativeToDealer(seat, dealerSeat)
+  return t(`gamesView.seats.${wind ?? seat}`)
+}
+
+/**
+ * RF-24.1: lo que ofrecen los **cinco** lugares donde se elige a un jugador —ganador, descartador,
+ * tenpai, riichi y chombo—. El nombre va delante porque es lo que dice a quién se está eligiendo, y
+ * el asiento detrás porque es lo que sitúa a quien juega; quitar cualquiera de los dos deja la
+ * elección a medias.
+ */
+function playerLabel(playerId: PlayerId): string {
   const seat = seatOf(playerId)
 
-  return seat === undefined ? '' : t(`gamesView.seats.${seat}`)
+  if (seat === undefined) {
+    return ''
+  }
+
+  return t('turnForm.mesa.playerWithSeat', {
+    name: playerNames.value.get(playerId) ?? playerId,
+    seat: t(`gamesView.seats.${seat}`),
+  })
 }
 
 /** RF-21.1: añadir un ganador al ron. El tsumo no admite más de uno (RF-21.5). */
@@ -299,15 +552,7 @@ async function handleSubmit(): Promise<void> {
     return
   }
 
-  const base = {
-    players: players.value,
-    dealerId: dealerId.value as PlayerId,
-    honba: honba.value,
-    riichiDeclaredBy: [...riichiPlayers.value],
-    riichiSticksBefore: riichiSticksBefore.value,
-  }
-
-  let resolution: ReturnType<typeof resolveTurn> | null = null
+  let resolution: TurnResolution | null = null
 
   if (isWin.value) {
     /**
@@ -371,64 +616,48 @@ async function handleSubmit(): Promise<void> {
       return
     }
 
-    const hand = {
-      yaku: selectedYaku.value,
-      yakuHan: totalHan.value,
-      doraCount: Number(doraCount.value),
-      fu: Number(fu.value),
-    }
-    const winners: readonly TurnWinnerInput[] = winnerIds.value.map((playerId) => ({
-      playerId,
-      hand,
-    }))
+    /**
+     * El turno que se va a guardar sale del **mismo** `currentTurnInput` que previsualiza la mesa.
+     * Que sean dos construcciones distintas era el modo barato de que la pantalla enseñara unos pagos
+     * y escribiera otros.
+     */
+    const outcome = resolveInputOf(currentTurnInput())
 
-    const turnInput =
-      resultType.value === 'ron'
-        ? {
-            ...base,
-            resultType: 'ron' as const,
-            winners,
-            discarderId: discarderId.value as PlayerId,
-          }
-        : { ...base, resultType: 'tsumo' as const, winners }
-
-    const outcome = resolveTurn(turnInput)
-
-    if (!outcome.ok) {
+    if (outcome === null || !outcome.ok) {
       errors.field = 'moreThanThreeWinners'
       return
     }
 
-    resolution = outcome
+    resolution = outcome.resolution
   } else if (isDraw.value) {
     if (tenpai.value.length === 0) {
       errors.field = 'tenpaiRequired'
       return
     }
 
-    const outcome = resolveTurn({ ...base, resultType: 'ryuukyoku', tenpai: [...tenpai.value] })
+    const outcome = resolveInputOf(currentTurnInput())
 
-    if (!outcome.ok) {
+    if (outcome === null || !outcome.ok) {
       errors.field = 'moreThanThreeWinners'
       return
     }
 
-    resolution = outcome
+    resolution = outcome.resolution
   } else {
     if (chomboId.value === '') {
       errors.field = 'resultRequired'
       return
     }
 
-    const outcome = resolveTurn({ ...base, resultType: 'chombo', chomboId: chomboId.value })
+    const outcome = resolveInputOf(currentTurnInput())
 
-    resolution = outcome.ok ? outcome : null
+    resolution = outcome !== null && outcome.ok ? outcome.resolution : null
   }
 
   if (
     resolution !== null &&
     !checkSquare({
-      deltas: resolution.resolution.deltas,
+      deltas: resolution.deltas,
       riichiDeclared: riichiPlayers.value.length,
       riichiSticksClaimedThisTurn: riichiSticksClaimedThisTurn(),
     }).ok
@@ -438,7 +667,7 @@ async function handleSubmit(): Promise<void> {
   }
 
   if (resolution !== null) {
-    await persist(resolution.resolution)
+    await persist(resolution)
   }
 }
 
@@ -447,6 +676,10 @@ async function handleSubmit(): Promise<void> {
  * criterio con el que `domain/replay.ts` avanza la localía, así que el turno guardado y el
  * re-derivado dicen lo mismo: antes de `specs/002` el formulario miraba `seat === 'east'` y guardaba
  * el renchan al revés a partir del primer cambio de localía.
+ *
+ * Lo que sale de aquí se usa **solo** para el renchan. El chombo no es renchan porque no hubo mano
+ * jugada, y la localía la conserva el recorrido —RF-7.6 de `specs/001`—, no este valor: por eso el
+ * `otherDraw` de abajo no dice que la localía avance, aunque el recorrido tampoco la mueva (T03).
  */
 function handOutcome(): HandOutcome {
   const dealer = dealerId.value as PlayerId
@@ -459,7 +692,6 @@ function handOutcome(): HandOutcome {
     return tenpai.value.includes(dealer) ? { type: 'dealerTenpaiDraw' } : { type: 'otherDraw' }
   }
 
-  // El chombo no interrumpe la partida (RF-7.3): el dealer pierde la mano y la localía avanza.
   return { type: 'otherDraw' }
 }
 
@@ -517,6 +749,7 @@ function resetForm(): void {
   winnerToAdd.value = ''
   discarderId.value = ''
   selectedYaku.value = []
+  yakuFilter.value = ''
   yakuHanOverride.value = '0'
   doraCount.value = '0'
   fu.value = '20'
@@ -634,9 +867,24 @@ function handleCancel(): void {
 
 <template>
   <form class="flex flex-col gap-3" @submit.prevent="handleSubmit">
-    <h2 class="text-lg font-semibold">
-      {{ t('turnForm.title') }}
-    </h2>
+    <div class="flex items-center justify-between gap-2">
+      <h2 class="text-lg font-semibold">
+        {{ t('turnForm.title') }}
+      </h2>
+      <div class="flex gap-2">
+        <BaseButton type="button" variant="ghost" data-test="help-open" @click="helpOpen = true">
+          {{ t('turnForm.help.open') }}
+        </BaseButton>
+        <BaseButton
+          type="button"
+          variant="ghost"
+          data-test="score-table-open"
+          @click="scoreTableOpen = true"
+        >
+          {{ t('turnForm.scoreTable.open') }}
+        </BaseButton>
+      </div>
+    </div>
 
     <fieldset
       v-if="nextHand !== null"
@@ -662,6 +910,45 @@ function handleCancel(): void {
       </span>
     </fieldset>
 
+    <fieldset
+      class="flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
+      data-test="mesa"
+    >
+      <legend class="px-1 text-mahjong-muted">
+        {{ t('turnForm.mesa.title') }}
+      </legend>
+      <span
+        v-for="row in mesa"
+        :key="row.playerId"
+        class="flex items-center justify-between gap-2"
+        :data-test="`mesa-${row.seat}`"
+      >
+        <span class="flex items-center gap-2">
+          <span class="text-xs text-mahjong-muted" data-test="mesa-wind">
+            {{ t('turnForm.mesa.windOfHand', { wind: t(`gamesView.seats.${row.wind}`) }) }}
+          </span>
+          <span data-test="mesa-name">{{ row.name }}</span>
+          <span class="text-xs text-mahjong-muted" data-test="mesa-seat">
+            {{ t(`gamesView.seats.${row.seat}`) }}
+          </span>
+          <span class="text-xs text-mahjong-muted" data-test="mesa-seat-wind">
+            ({{ windLabel(row.seat) }})
+          </span>
+          <span
+            v-if="row.isDealer"
+            class="rounded border border-mahjong-border px-1 text-xs"
+            data-test="mesa-dealer"
+          >
+            {{ t('turnForm.mesa.dealer') }}
+          </span>
+        </span>
+        <span class="flex items-baseline gap-2">
+          <span data-test="mesa-score">{{ n(row.score, 'points') }}</span>
+          <span :class="row.deltaClass" data-test="mesa-delta">{{ row.deltaText }}</span>
+        </span>
+      </span>
+    </fieldset>
+
     <div class="grid grid-cols-2 gap-3">
       <label class="flex flex-col gap-1 text-sm">
         <span>{{ t('turnForm.resultType') }}</span>
@@ -669,15 +956,20 @@ function handleCancel(): void {
       </label>
     </div>
 
-    <fieldset class="flex flex-col gap-1 text-sm" data-test="riichi">
+    <fieldset class="flex flex-wrap gap-x-4 gap-y-1 text-sm" data-test="riichi">
       <legend class="text-mahjong-muted">{{ t('turnForm.riichi') }}</legend>
-      <label v-for="player in players" :key="player.playerId" class="flex items-center gap-2">
+      <label
+        v-for="player in players"
+        :key="player.playerId"
+        class="flex items-center gap-2"
+        :data-test="`riichi-${player.seat}`"
+      >
         <input
           type="checkbox"
           :checked="riichiPlayers.includes(player.playerId)"
           @change="toggleIn(riichiPlayers, player.playerId)"
         />
-        <span>{{ labelOf(player.playerId) }}</span>
+        <span>{{ playerLabel(player.playerId) }}</span>
       </label>
     </fieldset>
 
@@ -691,7 +983,7 @@ function handleCancel(): void {
             class="flex items-center gap-1 rounded border border-mahjong-border px-2 py-1"
             :data-test="`winner-${seatOf(winner)}`"
           >
-            {{ seatOf(winner) === undefined ? '' : t(`gamesView.seats.${seatOf(winner)}`) }}
+            {{ playerLabel(winner) }}
             <button
               type="button"
               class="text-mahjong-negative"
@@ -718,19 +1010,29 @@ function handleCancel(): void {
 
       <div class="flex flex-col gap-1 text-sm">
         <span class="text-mahjong-muted">{{ t('turnForm.yaku') }}</span>
-        <label
-          v-for="option in yakuOptions"
-          :key="option.value"
-          class="flex items-center gap-2 text-xs"
+        <BaseInput v-model="yakuFilter" name="yakuFilter" :placeholder="t('turnForm.yakuFilter')" />
+        <div class="flex flex-col gap-1" data-test="yaku-options">
+          <label
+            v-for="option in visibleYakuOptions"
+            :key="option.value"
+            class="flex items-center gap-2 text-xs"
+          >
+            <input
+              type="checkbox"
+              :checked="selectedYaku.includes(option.value as YakuId)"
+              :value="option.value"
+              @change="toggleYaku(option.value as YakuId)"
+            />
+            <span>{{ option.label }}</span>
+          </label>
+        </div>
+        <p
+          v-if="visibleYakuOptions.length === 0"
+          class="text-xs text-mahjong-muted"
+          data-test="yaku-no-results"
         >
-          <input
-            type="checkbox"
-            :checked="selectedYaku.includes(option.value as YakuId)"
-            :value="option.value"
-            @change="toggleYaku(option.value as YakuId)"
-          />
-          <span>{{ option.label }}</span>
-        </label>
+          {{ t('turnForm.yakuNoResults') }}
+        </p>
       </div>
 
       <div class="flex flex-col gap-1 text-sm">
@@ -779,13 +1081,14 @@ function handleCancel(): void {
 
     <fieldset v-else-if="isDraw" class="flex flex-col gap-1 text-sm" data-test="tenpai">
       <legend class="text-mahjong-muted">{{ t('turnForm.tenpai') }}</legend>
-      <label v-for="player in players" :key="player.playerId" class="flex items-center gap-2">
-        <input
-          type="checkbox"
-          :checked="tenpai.includes(player.playerId)"
-          @change="toggleIn(tenpai, player.playerId)"
-        />
-        <span>{{ labelOf(player.playerId) }}</span>
+      <label
+        v-for="player in players"
+        :key="player.playerId"
+        class="flex items-center gap-2"
+        :data-test="`tenpai-${player.seat}`"
+      >
+        <input v-model="tenpai" type="checkbox" :value="player.playerId" />
+        <span>{{ playerLabel(player.playerId) }}</span>
       </label>
     </fieldset>
 
@@ -830,5 +1133,8 @@ function handleCancel(): void {
         {{ t('turnForm.submit') }}
       </BaseButton>
     </div>
+
+    <HelpModal :open="helpOpen" @close="helpOpen = false" />
+    <ScoreTableModal :open="scoreTableOpen" @close="scoreTableOpen = false" />
   </form>
 </template>

@@ -292,3 +292,127 @@ describe('T79 · GameForm', () => {
     expect(wrapper.text()).not.toContain('No se pudo guardar la partida.')
   })
 })
+
+/** Las opciones de un desplegable de asiento, en el orden en que el formulario las pinta. */
+function opcionesDeAsiento(
+  wrapper: ReturnType<typeof mountForm>,
+  seat: 'east' | 'south' | 'west' | 'north',
+): readonly { readonly value: string; readonly label: string }[] {
+  const select = wrapper.find(`select[name="seat-${seat}"]`)
+
+  if (select.exists() === false) {
+    throw new Error(`no hay desplegable para el asiento ${seat}`)
+  }
+
+  return select.findAll('option').map((option) => ({
+    value: option.attributes('value') ?? '',
+    label: option.text(),
+  }))
+}
+
+/**
+ * T14 a T16 · RF-27.1 a RF-27.3. El desplegable ofrece **solo jugadores activos** más el invitado.
+ *
+ * Un jugador retirado no puede sentarse, así que no se lista. Esto **no** rompe RF-2.9 de 001
+ * —repetir jugador entre partidas abiertas sigue permitido— porque ese caso trata de jugadores
+ * activos que ya están en otro tablero, y esos siguen apareciendo. Y un club entero dado de baja no
+ * se queda sin candidatos: el invitado cierra la lista (caso límite 7 de la spec).
+ */
+describe('T14-T16 · jugadores candidatos', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  it('no ofrece a los jugadores retirados, solo a los dados de alta (RF-27.1)', async () => {
+    const [active, retired] = await createFourPlayers()
+
+    if (active === undefined || retired === undefined) {
+      throw new Error('faltan jugadores')
+    }
+
+    await playersRepository.update(retired.id, { active: false })
+
+    const wrapper = mountForm()
+    await vi.waitFor(() => expect(opcionesDeAsiento(wrapper, 'east')).toHaveLength(4))
+
+    const options = opcionesDeAsiento(wrapper, 'east')
+
+    expect(options.some((option) => option.value === active.id)).toBe(true)
+    expect(options.some((option) => option.value === retired.id)).toBe(false)
+    expect(options.at(-1)?.value).toBe('__guest__')
+  })
+
+  it('ofrece igual a un jugador que ya está en otra partida abierta, con aviso (RF-27.2)', async () => {
+    const players = await createFourPlayers()
+    const [p1, p2, p3, p4] = players
+
+    if (p1 === undefined || p2 === undefined || p3 === undefined || p4 === undefined) {
+      throw new Error('faltan jugadores')
+    }
+
+    await gamesRepository.create({
+      seasonId: null,
+      date: { seconds: Date.now() / 1000, nanoseconds: 0 },
+      gameLength: 'tonpuusen',
+      ruleset: 'mahjongSouls',
+      rulesetVersion: '1.0',
+      startPoints: 25000,
+      players: [
+        { playerId: p1.id, seat: 'east' },
+        { playerId: p2.id, seat: 'south' },
+        { playerId: p3.id, seat: 'west' },
+        { playerId: p4.id, seat: 'north' },
+      ],
+    })
+
+    const wrapper = mountForm()
+    await vi.waitFor(() => expect(opcionesDeAsiento(wrapper, 'east')).toHaveLength(5))
+
+    const options = opcionesDeAsiento(wrapper, 'east')
+
+    expect(options.some((option) => option.value === p1.id)).toBe(true)
+
+    await wrapper.find('input[type="date"]').setValue('2024-05-01')
+    await wrapper.find('select[name="length"]').setValue('tonpuusen')
+    await selectSeats(
+      wrapper,
+      players.map((player) => player.id),
+    )
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.text()).toContain('Jugadores ya presentes en otra partida abierta:')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+  })
+
+  it('con ningún jugador dado de alta el desplegable ofrece al invitado y la partida se completa (RF-27.3)', async () => {
+    const players = await createFourPlayers()
+
+    for (const player of players) {
+      await playersRepository.update(player.id, { active: false })
+    }
+
+    const wrapper = mountForm()
+    await vi.waitFor(() => expect(opcionesDeAsiento(wrapper, 'east')).toHaveLength(1))
+
+    const options = opcionesDeAsiento(wrapper, 'east')
+
+    expect(options.map((option) => option.value)).toEqual(['__guest__'])
+
+    await wrapper.find('input[type="date"]').setValue('2024-05-01')
+    await wrapper.find('select[name="length"]').setValue('tonpuusen')
+
+    for (const [index, seat] of ['east', 'south', 'west', 'north'].entries()) {
+      await wrapper.find(`select[name="seat-${seat}"]`).setValue('__guest__')
+      await wrapper.find(`input[name="guest-name-${seat}"]`).setValue(`Invitado ${index + 1}`)
+      await wrapper.find(`input[name="guest-external-id-${seat}"]`).setValue(`INV-0${index + 1}`)
+    }
+
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    const record = wrapper.emitted('saved')?.[0]?.[0] as { players: readonly GameParticipant[] }
+    const seatIds = record.players.map((player) => player.playerId)
+
+    expect(new Set(seatIds).size).toBe(4)
+  })
+})

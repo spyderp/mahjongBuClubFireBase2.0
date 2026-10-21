@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath, URL as NodeURL } from 'node:url'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { mount } from '@vue/test-utils'
@@ -9,9 +12,12 @@ import { gamesRepository } from '@/data/games.repository'
 import type { GameRecord } from '@/data/games.repository'
 import { playersRepository } from '@/data/players.repository'
 import type { PlayerRecord } from '@/data/players.repository'
-import { turnsRepository } from '@/data/turns.repository'
+import { turnsRepository, capturedTurnOf } from '@/data/turns.repository'
+import type { CapturedTurn } from '@/domain/replay'
+import { replayTurns } from '@/domain/replay'
 import type { PlayerDelta } from '@/domain/turn'
-import type { PlayerId } from '@/domain/types'
+import type { PlayerId, Seat } from '@/domain/types'
+import { YAKU_CATALOG } from '@/domain/yaku'
 import { fakeReset } from '@/test-utils/fakeFirestore'
 import { createTestI18n } from '@/test-utils/i18n'
 import { useSessionStore } from '@/stores/session'
@@ -27,10 +33,23 @@ vi.mock('@/app/firebase', async () => {
   }
 })
 
+/** Los cuatro de la mesa, en el orden de los asientos: Este, Sur, Oeste y Norte. */
+const SEATS: readonly Seat[] = ['east', 'south', 'west', 'north']
+
+const NOMBRES: readonly string[] = ['Ana', 'Bob', 'Carla', 'David']
+
+/** El texto que pinta el catálogo para cada asiento. */
+const ETIQUETAS: readonly string[] = ['Este', 'Sur', 'Oeste', 'Norte']
+
+/**
+ * Los cuatro de la mesa con **nombre propio**. RF-24.1 hace que la interfaz ofrezca el nombre y no el
+ * asiento, y un nombre igual al identificador no distinguiría «la mesa lo leyó de la lista de
+ * jugadores» de «la mesa no encontró a nadie y pintó el identificador de emergencia».
+ */
 async function createFourPlayers(): Promise<PlayerRecord[]> {
   return Promise.all(
-    ['p1', 'p2', 'p3', 'p4'].map((externalId) =>
-      playersRepository.create({ externalId, name: externalId }),
+    ['p1', 'p2', 'p3', 'p4'].map((externalId, index) =>
+      playersRepository.create({ externalId, name: NOMBRES[index] ?? externalId }),
     ),
   )
 }
@@ -111,36 +130,40 @@ async function setWinHand(
   }
 }
 
-async function toggleTenpaiPlayer(
+/**
+ * La casilla de un jugador en los dos fieldset de la mesa. Se busca por el asiento y no por el texto
+ * de la etiqueta, y el motivo es RF-24.1: la etiqueta pasa a llevar el nombre del jugador, y con
+ * nombres como «Oeste» o «Ana» un `includes` por texto no distinguiría «Este» de «Oeste».
+ */
+function casillaDe(
   wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
-  seatLabel: string,
-): Promise<void> {
-  const fieldsets = wrapper.findAll('fieldset')
-  const tenpai = fieldsets[1]
-  if (tenpai === undefined) {
-    throw new Error('no hay fieldset de tenpai')
+  fieldset: 'riichi' | 'tenpai',
+  seat: Seat,
+) {
+  const label = wrapper.find(
+    `fieldset[data-test="${fieldset}"] label[data-test="${fieldset}-${seat}"]`,
+  )
+
+  if (label.exists() === false || label.find('input').exists() === false) {
+    throw new Error(`no hay casilla de «${fieldset}» para el asiento ${seat}`)
   }
 
-  const label = tenpai.findAll('label').find((candidate) => candidate.text() === seatLabel)
-  if (label === undefined || label.find('input') === undefined) {
-    throw new Error(`no hay jugador «${seatLabel}» en el fieldset de tenpai`)
-  }
-  await label.find('input').setValue(true)
+  return label.find('input')
 }
 
-/** El contador «Riichi declarado» es el primer fieldset; cada etiqueta es el asiento. */
+async function toggleTenpaiPlayer(
+  wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+  seat: Seat,
+): Promise<void> {
+  const checkbox = casillaDe(wrapper, 'tenpai', seat)
+  await checkbox.setValue(!(checkbox.element as HTMLInputElement).checked)
+}
+
 async function declareRiichi(
   wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
-  seatLabel: string,
+  seat: Seat,
 ): Promise<void> {
-  const counters = wrapper.find('fieldset[data-test="riichi"]')
-
-  const label = counters.findAll('label').find((candidate) => candidate.text() === seatLabel)
-  if (label === undefined || label.find('input').exists() === false) {
-    throw new Error(`no hay contador de riichi para el asiento «${seatLabel}»`)
-  }
-
-  await label.find('input').setValue(true)
+  await casillaDe(wrapper, 'riichi', seat).setValue(true)
 }
 
 describe('T80+T81 · TurnForm', () => {
@@ -283,7 +306,7 @@ describe('T80+T81 · TurnForm', () => {
       'ippatsu',
       'menzenTsumo',
     ])
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
 
     await wrapper.find('form').trigger('submit')
 
@@ -310,7 +333,7 @@ describe('T80+T81 · TurnForm', () => {
 
     authenticate(pinia)
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
-    await toggleTenpaiPlayer(wrapper, 'Sur')
+    await toggleTenpaiPlayer(wrapper, 'south')
 
     await wrapper.find('form').trigger('submit')
     await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
@@ -578,7 +601,7 @@ describe('T34 · la localía, la ronda y el honba son de solo lectura', () => {
 
     authenticate(pinia)
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
-    await toggleTenpaiPlayer(wrapper, 'Este')
+    await toggleTenpaiPlayer(wrapper, 'east')
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
 
     await wrapper.find('form').trigger('submit')
@@ -756,7 +779,7 @@ describe('T36 · los han se derivan del catálogo, con desglose y ajuste', () =>
 
     authenticate(pinia)
     await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 0, fu: 30 }, ['riichi'])
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
     await nextTick()
 
     expect(wrapper.find('[data-test="han-total"]').text()).toContain('1')
@@ -773,7 +796,7 @@ describe('T36 · los han se derivan del catálogo, con desglose y ajuste', () =>
 
     authenticate(pinia)
     await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 1, fu: 30 }, ['riichi'])
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
     await wrapper.find('input[name="yakuHanOverride"]').setValue('-1')
     await nextTick()
 
@@ -799,7 +822,7 @@ describe('T36 · los han se derivan del catálogo, con desglose y ajuste', () =>
       'riichi',
       'rinshanKaihou',
     ])
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
     await nextTick()
 
     const breakdown = wrapper.find('[data-test="han-breakdown"]').text()
@@ -816,7 +839,7 @@ describe('T36 · los han se derivan del catálogo, con desglose y ajuste', () =>
 
     authenticate(pinia)
     await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 0, fu: 30 }, ['riichi'])
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
     await wrapper.find('input[name="yakuHanOverride"]').setValue('2')
     await nextTick()
 
@@ -877,7 +900,7 @@ describe('T37 · el formulario se limpia al guardar', () => {
     authenticate(pinia)
     await wrapper.find('select[name="resultType"]').setValue('chombo')
     await wrapper.find('select[name="chomboId"]').setValue(playerOf(game, 2))
-    await declareRiichi(wrapper, 'Este')
+    await declareRiichi(wrapper, 'east')
     await wrapper.find('form').trigger('submit')
     await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
     await nextTick()
@@ -965,7 +988,7 @@ describe('T37 · el formulario se limpia al guardar', () => {
 
     authenticate(pinia)
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
-    await toggleTenpaiPlayer(wrapper, 'Este')
+    await toggleTenpaiPlayer(wrapper, 'east')
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
 
     await wrapper.find('form').trigger('submit')
@@ -1017,25 +1040,11 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     }
   }
 
-  async function declareRiichiOf(
-    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
-    seatLabel: string,
-  ): Promise<void> {
-    const labels = wrapper.find('fieldset[data-test="riichi"]').findAll('label')
-    const label = labels.find((candidate) => candidate.text() === seatLabel)
-
-    if (label === undefined) {
-      throw new Error(`no hay contador de riichi para «${seatLabel}»`)
-    }
-
-    await label.find('input').setValue(true)
-  }
-
   /** Tsumo de 1 han 30 fu con el riichi declarado: la mano más pequeña que puntúa. */
   async function dealerTsumo(
     wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
     winner: PlayerId,
-    seatLabel: string,
+    seat: Seat,
   ): Promise<void> {
     const savedBefore = wrapper.emitted('saved')?.length ?? 0
 
@@ -1045,7 +1054,7 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     await wrapper.find('input[name="doraCount"]').setValue('0')
     await wrapper.find('input[name="fu"]').setValue('30')
     await wrapper.find('input[type="checkbox"][value="riichi"]').setValue(true)
-    await declareRiichiOf(wrapper, seatLabel)
+    await declareRiichi(wrapper, seat)
     await wrapper.find('form').trigger('submit')
     await vi.waitFor(() =>
       expect(wrapper.emitted('saved')?.length ?? 0).toBeGreaterThan(savedBefore),
@@ -1055,20 +1064,13 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
   /** Empate en el que solo está en tenpai el asiento indicado. */
   async function drawWithTenpai(
     wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
-    seatLabel: string,
+    seat: Seat,
   ): Promise<void> {
     const savedBefore = wrapper.emitted('saved')?.length ?? 0
 
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
     await vi.waitFor(() => expect(wrapper.find('fieldset[data-test="tenpai"]').exists()).toBe(true))
-    const labels = wrapper.find('fieldset[data-test="tenpai"]').findAll('label')
-    const label = labels.find((candidate) => candidate.text() === seatLabel)
-
-    if (label === undefined) {
-      throw new Error(`no hay casilla de tenpai para «${seatLabel}»`)
-    }
-
-    await label.find('input').setValue(true)
+    await toggleTenpaiPlayer(wrapper, seat)
     await wrapper.find('form').trigger('submit')
     await vi.waitFor(() =>
       expect(wrapper.emitted('saved')?.length ?? 0).toBeGreaterThan(savedBefore),
@@ -1085,16 +1087,16 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
     expect(panel(wrapper)).toStrictEqual({ dealer: 'Este', honba: '0' })
 
-    await dealerTsumo(wrapper, east, 'Este')
+    await dealerTsumo(wrapper, east, 'east')
     expect(panel(wrapper)).toStrictEqual({ dealer: 'Este', honba: '1' })
 
-    await drawWithTenpai(wrapper, 'Sur')
+    await drawWithTenpai(wrapper, 'south')
     expect(panel(wrapper)).toStrictEqual({ dealer: 'Sur', honba: '0' })
 
-    await drawWithTenpai(wrapper, 'Sur')
+    await drawWithTenpai(wrapper, 'south')
     expect(panel(wrapper)).toStrictEqual({ dealer: 'Sur', honba: '1' })
 
-    await dealerTsumo(wrapper, south, 'Sur')
+    await dealerTsumo(wrapper, south, 'south')
     expect(panel(wrapper)).toStrictEqual({ dealer: 'Sur', honba: '2' })
   })
 
@@ -1106,11 +1108,11 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
 
     authenticate(pinia)
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
-    await dealerTsumo(wrapper, east, 'Este')
-    await drawWithTenpai(wrapper, 'Sur')
-    await drawWithTenpai(wrapper, 'Sur')
+    await dealerTsumo(wrapper, east, 'east')
+    await drawWithTenpai(wrapper, 'south')
+    await drawWithTenpai(wrapper, 'south')
 
-    await dealerTsumo(wrapper, south, 'Sur')
+    await dealerTsumo(wrapper, south, 'south')
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
 
     const stored = await turnsRepository.list(game.id)
@@ -1128,7 +1130,7 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
 
     authenticate(pinia)
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
-    await dealerTsumo(wrapper, east, 'Este')
+    await dealerTsumo(wrapper, east, 'east')
 
     const stored = await turnsRepository.list(game.id)
 
@@ -1152,11 +1154,11 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
 
     // El Este es dealer y gana: renchan.
-    await dealerTsumo(wrapper, east, 'Este')
+    await dealerTsumo(wrapper, east, 'east')
     // Ahora el dealer es Sur; el Este ya no lo es y su empate no es renchan.
-    await drawWithTenpai(wrapper, 'Sur')
+    await drawWithTenpai(wrapper, 'south')
     // El dealer es Sur y conserva la tenpai: renchan.
-    await drawWithTenpai(wrapper, 'Sur')
+    await drawWithTenpai(wrapper, 'south')
 
     const stored = await turnsRepository.list(game.id)
 
@@ -1169,7 +1171,17 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     expect(stored[2]?.dealerId).toBe(south)
   })
 
-  it('un chombo no es renchan: el dealer pierde la mano y la localía avanza', async () => {
+  /**
+   * T03 · RF-30.6. El nombre de este test decía «el chombo no es renchan: el dealer pierde la mano y
+   * la localía avanza», y la segunda mitad es **falsa**: el chombo no rota la localía (RF-7.6 de 001).
+   * El test pasaba porque solo miraba `isRenchan`, así que el nombre se llevaba por delante la regla
+   * equivocada sin que nada fallara (003-qa.md, B4). Un nombre de test es documentación, y
+   * documentación que contradice la norma vigente es peor que no tenerla.
+   *
+   * Ahora el nombre dice lo que el test comprueba: que el chombo **conserva** la localía, y que no es
+   * renchan porque no hubo mano jugada.
+   */
+  it('un chombo no es renchan y conserva la localía', async () => {
     const game = await createGame()
     const { wrapper, pinia } = mountTurnForm(game)
     const north = playerOf(game, 3)
@@ -1184,6 +1196,11 @@ describe('el contador de la mano siguiente y el bonus que da', () => {
     const stored = await turnsRepository.list(game.id)
 
     expect(stored[0]?.isRenchan).toBe(false)
+    // Y la marca de localía no se mueve: el Norte hizo chombo y el Este sigue siendo la localía.
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="next-dealer"]').text()).toContain('Este'),
+    )
+    expect(wrapper.find('[data-test="next-honba"]').text()).toContain('0')
   })
 })
 
@@ -1230,7 +1247,7 @@ describe('T38 · los rechazos se avisan con su propia clave', () => {
 
     authenticate(pinia)
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
-    await toggleTenpaiPlayer(wrapper, 'Este')
+    await toggleTenpaiPlayer(wrapper, 'east')
     await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
 
     await wrapper.find('form').trigger('submit')
@@ -1273,11 +1290,903 @@ describe('T38 · los rechazos se avisan con su propia clave', () => {
     expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(false)
 
     await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
-    await toggleTenpaiPlayer(wrapper, 'Este')
+    await toggleTenpaiPlayer(wrapper, 'east')
     await wrapper.find('form').trigger('submit')
     await vi.waitFor(() => expect(wrapper.find('[data-test="capture-error"]').exists()).toBe(true))
 
     expect(wrapper.find('[data-test="capture-error"]').text()).toContain('no se puede reproducir')
     expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+})
+/**
+ * Los ayudantes de RF-24. La mesa es lo que **faltaba** en esta pantalla hasta `specs/003`: el
+ * marcador estaba calculado desde `specs/002` y no se pintaba, y los cinco lugares donde se elige a
+ * un jugador ofrecían el asiento y no el nombre.
+ */
+
+/**
+ * Una partida de empates, en el orden dado, con la tenpai de cada turno.
+ *
+ * Los derivados se escriben **calculados**, no inventados: la mesa pinta el marcador y la diferencia
+ * que salen de los `deltas` que hay en el documento (`TurnForm.vue` · `scores`), así que un `deltas:
+ * []` de mentira dejaría la mesa en cero y el test no comprobaría nada. Es lo mismo que hace el
+ * formulario al guardar: el recorrido calcula, el documento lo recoge (RF-18.13).
+ */
+async function partidaDeEmpates(
+  game: GameRecord,
+  tenpaisPorTurno: readonly (readonly PlayerId[])[],
+): Promise<void> {
+  const captured: CapturedTurn[] = tenpaisPorTurno.map((tenpai, indice) => ({
+    turnNo: indice + 1,
+    resultType: 'ryuukyoku',
+    hand: { yaku: [], yakuHan: 0, doraCount: 0, fu: 0 },
+    winners: [],
+    discarderId: null,
+    chomboId: null,
+    tenpai: [...tenpai],
+    riichiDeclaredBy: [],
+  }))
+
+  const recorrido = replayTurns(
+    game.players.map((participant) => ({
+      playerId: participant.playerId,
+      seat: participant.seat,
+      score: game.startPoints,
+    })),
+    captured,
+    1,
+  )
+
+  if (!recorrido.ok) {
+    throw new Error(`la partida no se puede recorrer: ${recorrido.reason}`)
+  }
+
+  for (const [indice, derivado] of recorrido.outcome.turns.entries()) {
+    const captura = captured[indice]
+
+    if (captura === undefined) {
+      throw new Error(`el recorrido devolvió el turno ${derivado.turnNo} sin captura`)
+    }
+
+    await turnsRepository.create(game.id, {
+      turnNo: derivado.turnNo,
+      wind: derivado.wind,
+      dealerId: derivado.dealerId,
+      honba: derivado.honba,
+      resultType: 'ryuukyoku',
+      yaku: [],
+      yakuHan: 0,
+      yakuHanOverride: 0,
+      doraCount: 0,
+      fu: 0,
+      tenpai: [...captura.tenpai],
+      riichiDeclaredBy: [],
+      riichiSticks: derivado.riichiSticks,
+      value: derivado.values,
+      deltas: derivado.deltas,
+      capturedBy: 'user-1',
+      isRenchan: false,
+      isFinalTurn: false,
+      discarderId: null,
+      chomboId: null,
+    })
+  }
+}
+
+/**
+ * Una partida de `turnos` empates en la que la localía **no** se conserva en ninguno: cada turno
+ * deja fuera a quien la tiene, así que avanza asiento a asiento desde el Este.
+ */
+async function partidaSinLocalia(game: GameRecord, turnos: number): Promise<void> {
+  await partidaDeEmpates(
+    game,
+    Array.from({ length: turnos }, (_vacio, indice) => [
+      playerOf(game, ((indice + 1) % 4) as 0 | 1 | 2 | 3),
+    ]),
+  )
+}
+
+/**
+ * Corrige la tenpai de un turno **como lo hace `useGameTurns.correctTurn`**: el campo capturado más
+ * los derivados que el recorrido vuelve a calcular (RF-18.7). Tocar solo la tenpai dejaría los
+ * `deltas` viejos en el documento y la mesa pintando un estado que ya nadie guardó.
+ */
+async function corregirTenpai(
+  game: GameRecord,
+  turnNo: number,
+  tenpai: readonly PlayerId[],
+): Promise<void> {
+  const stored = await turnsRepository.list(game.id)
+  const recorrido = replayTurns(
+    game.players.map((participant) => ({
+      playerId: participant.playerId,
+      seat: participant.seat,
+      score: game.startPoints,
+    })),
+    stored.map((turn) =>
+      turn.turnNo === turnNo ? capturedTurnOf(turn, { tenpai }) : capturedTurnOf(turn),
+    ),
+    1,
+  )
+
+  if (!recorrido.ok) {
+    throw new Error(`la partida corregida no se puede recorrer: ${recorrido.reason}`)
+  }
+
+  const propio = recorrido.outcome.turns.find((turn) => turn.turnNo === turnNo)
+
+  if (propio === undefined) {
+    throw new Error(`el recorrido no devolvió el turno ${turnNo}`)
+  }
+
+  await turnsRepository.update(
+    game.id,
+    turnNo,
+    {
+      tenpai: [...tenpai],
+      wind: propio.wind,
+      dealerId: propio.dealerId,
+      honba: propio.honba,
+      riichiSticks: propio.riichiSticks,
+      value: propio.values,
+      deltas: propio.deltas,
+    },
+    { by: 'user-que-corrige', expectedAuditCount: 0 },
+  )
+}
+
+/** Una fila de la mesa por asiento, con lo que cada uno de los cuatro requisitos tiene que mostrar. */
+type Fila = {
+  readonly texto: string
+  readonly viento: string
+  readonly nombre: string
+  readonly asiento: string
+  readonly marcador: string
+  readonly delta: string
+  readonly clasesDelta: readonly string[]
+  readonly esLocalia: boolean
+}
+
+function filaDe(wrapper: ReturnType<typeof mountTurnForm>['wrapper'], seat: Seat): Fila {
+  const row = wrapper.find(`[data-test="mesa-${seat}"]`)
+
+  if (row.exists() === false) {
+    throw new Error(`la mesa no tiene fila para el asiento ${seat}`)
+  }
+
+  const delta = row.find('[data-test="mesa-delta"]')
+
+  return {
+    texto: row.text(),
+    viento: row.find('[data-test="mesa-wind"]').text(),
+    nombre: row.find('[data-test="mesa-name"]').text(),
+    asiento: row.find('[data-test="mesa-seat"]').text(),
+    marcador: row.find('[data-test="mesa-score"]').text(),
+    delta: delta.text(),
+    clasesDelta: delta.classes(),
+    esLocalia: row.find('[data-test="mesa-dealer"]').exists(),
+  }
+}
+
+/** Las cuatro filas de la mesa, en el orden de los asientos. */
+function mesaDe(wrapper: ReturnType<typeof mountTurnForm>['wrapper']): readonly Fila[] {
+  return SEATS.map((seat) => filaDe(wrapper, seat))
+}
+
+/** Las etiquetas de las casillas de un fieldset de la mesa, en el orden de los asientos. */
+function textosDe(
+  wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+  fieldset: 'riichi' | 'tenpai',
+): readonly string[] {
+  return SEATS.map((seat) => {
+    const label = wrapper.find(
+      `fieldset[data-test="${fieldset}"] label[data-test="${fieldset}-${seat}"]`,
+    )
+
+    if (label.exists() === false) {
+      throw new Error(`no hay etiqueta de «${fieldset}» para el asiento ${seat}`)
+    }
+
+    return label.text()
+  })
+}
+
+/** Las opciones de un desplegable de jugador, en el orden en que las pinta, sin la de «ninguno». */
+function opcionesDe(
+  wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+  name: string,
+): readonly string[] {
+  const select = wrapper.find(`select[name="${name}"]`)
+
+  if (select.exists() === false) {
+    throw new Error(`no hay desplegable «${name}»`)
+  }
+
+  return select
+    .findAll('option')
+    .filter((option) => (option.attributes('value') ?? '') !== '')
+    .map((option) => option.text())
+}
+
+/**
+ * T06 · RF-24.1 a RF-24.4. Los cuatro datos de la mesa —el nombre con su asiento, la diferencia con
+ * su color, la marca de localía y el viento de la mano— en los **tres estados** en los que cambian:
+ * recién creada, con un turno ya en la mesa y después de corregirlo.
+ *
+ * Y una cuarta cosa que la mesa tiene que decir bien, porque es la que más engaña: la diferencia que
+ * pinta es la del turno que se está **capturando**, no la acumulada de la partida. El marcador de la
+ * izquierda es el acumulado; el número de la derecha es lo que suma o resta la mano que se está
+ * rellenando ahora mismo.
+ */
+describe('T06 · la mesa', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('recién creada: nombre, asiento, viento y localía, y ninguna diferencia que pintar', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="mesa"]').exists()).toBe(true))
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').nombre).toBe('Ana'))
+
+    const mesa = mesaDe(wrapper)
+
+    expect(mesa.map((fila) => fila.nombre)).toStrictEqual(NOMBRES)
+    expect(mesa.map((fila) => fila.asiento)).toStrictEqual(ETIQUETAS)
+    // El punto de partida de los cuatro (caso límite 1).
+    expect(mesa.map((fila) => fila.marcador)).toStrictEqual([
+      '25.000',
+      '25.000',
+      '25.000',
+      '25.000',
+    ])
+    expect(mesa.every((fila) => fila.delta === '0')).toBe(true)
+    expect(mesa.every((fila) => fila.clasesDelta.length === 0)).toBe(true)
+    // Y la marca de localía va con la localía real, que al empezar es el Este.
+    expect(mesa.map((fila) => fila.esLocalia)).toStrictEqual([true, false, false, false])
+  })
+
+  it('con un turno ya guardado: el marcador acumulado y la diferencia del turno que se captura', async () => {
+    const game = await createGame()
+    // El turno que ya está en la mesa: el Este cobra 3000 y los otros tres pagan 1000.
+    await partidaDeEmpates(game, [[playerOf(game, 0)]])
+
+    const { wrapper } = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').marcador).toBe('28.000'))
+
+    // El marcador **sí** es el acumulado: es la puntuación de cada uno en la mesa.
+    expect(mesaDe(wrapper).map((fila) => fila.marcador)).toStrictEqual([
+      '28.000',
+      '24.000',
+      '24.000',
+      '24.000',
+    ])
+
+    // Pero la diferencia es la del turno en curso, y de momento no hay ninguno: ni +3000 ni −1000.
+    expect(mesaDe(wrapper).map((fila) => fila.delta)).toStrictEqual(['0', '0', '0', '0'])
+    expect(mesaDe(wrapper).every((fila) => fila.clasesDelta.length === 0)).toBe(true)
+
+    /**
+     * Ahora se captura un tsumo de la localía de un solo han **con 1 honba** (porque el turno
+     * anterior fue un empate con el Este en tenpai): la diferencia que aparece es la de
+     * **esta** mano —1800 al dealer y −600 a cada uno de los otros tres—, y no la del turno
+     * anterior que ya está guardado. Un −3000 acumulado sobre un −600 de ahora sería una cifra
+     * que no se va a guardar nunca.
+     */
+    await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 0, fu: 30 }, ['tanyao'])
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').delta).toBe('+1800'))
+
+    expect(mesaDe(wrapper).map((fila) => fila.delta)).toStrictEqual([
+      '+1800',
+      '-600',
+      '-600',
+      '-600',
+    ])
+    expect(mesaDe(wrapper).map((fila) => fila.marcador)).toStrictEqual([
+      '28.000',
+      '24.000',
+      '24.000',
+      '24.000',
+    ])
+  })
+
+  it('la diferencia cambia con la mano que se está rellenando, no con las anteriores', async () => {
+    const game = await createGame()
+    await partidaDeEmpates(game, [[playerOf(game, 0)]])
+
+    const { wrapper } = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').marcador).toBe('28.000'))
+
+    // Un empate con los cuatro en tenpai no mueve nada…
+    await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
+    await vi.waitFor(() => expect(wrapper.find('fieldset[data-test="tenpai"]').exists()).toBe(true))
+    for (const seat of SEATS) {
+      await toggleTenpaiPlayer(wrapper, seat)
+    }
+
+    expect(mesaDe(wrapper).every((fila) => fila.delta === '0')).toBe(true)
+
+    /**
+     * …y en el que solo está en tenpai el Este, el Norte paga lo que ya había pagado en el turno
+     * guardado y no se le vuelve a descontar.
+     */
+    await toggleTenpaiPlayer(wrapper, 'north')
+    await toggleTenpaiPlayer(wrapper, 'west')
+    await toggleTenpaiPlayer(wrapper, 'south')
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').delta).toBe('+3000'))
+
+    expect(mesaDe(wrapper).map((fila) => fila.delta)).toStrictEqual([
+      '+3000',
+      '-1000',
+      '-1000',
+      '-1000',
+    ])
+  })
+
+  it('después de corregir, muestra el marcador corregido y no el que había', async () => {
+    const game = await createGame()
+    await partidaDeEmpates(game, [[playerOf(game, 0)]])
+
+    const antes = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(antes.wrapper, 'east').marcador).toBe('28.000'))
+    antes.wrapper.unmount()
+
+    // Quien está en la mesa se da cuenta de que la tenpai era la del Oeste y lo corrige (RF-19.1).
+    await corregirTenpai(game, 1, [playerOf(game, 2)])
+
+    const despues = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(despues.wrapper, 'west').marcador).toBe('28.000'))
+
+    expect(filaDe(despues.wrapper, 'east').marcador).toBe('24.000')
+    // Y la diferencia del turno en curso sigue a cero: lo corregido ya está en el marcador.
+    expect(mesaDe(despues.wrapper).every((fila) => fila.delta === '0')).toBe(true)
+  })
+})
+
+/**
+ * T07 · RF-24.1. Los **cinco** lugares donde se elige a un jugador, no solo el primero: ganador,
+ * descartador, tenpai, riichi y chombo. Cada uno ofrece el nombre **con el asiento al lado**, porque
+ * el asiento es lo que sitúa a quien juega y el nombre es lo que le dice a quién se está eligiendo.
+ */
+describe('T07 · los nombres, no los asientos', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('los cinco ofrecen el nombre con su asiento al lado', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+    const esperados = ['Ana · Este', 'Bob · Sur', 'Carla · Oeste', 'David · Norte']
+
+    await vi.waitFor(() => expect(textosDe(wrapper, 'riichi')).toStrictEqual(esperados))
+
+    // El riichi está en pantalla siempre que el formulario lo esté.
+    expect(textosDe(wrapper, 'riichi')).toStrictEqual(esperados)
+
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await vi.waitFor(() => expect(wrapper.find('select[name="winnerId"]').exists()).toBe(true))
+    expect(opcionesDe(wrapper, 'discarderId')).toStrictEqual(esperados)
+    expect(opcionesDe(wrapper, 'winnerId')).toStrictEqual(esperados)
+
+    await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
+    await vi.waitFor(() => expect(wrapper.find('fieldset[data-test="tenpai"]').exists()).toBe(true))
+    expect(textosDe(wrapper, 'tenpai')).toStrictEqual(esperados)
+
+    await wrapper.find('select[name="resultType"]').setValue('chombo')
+    await vi.waitFor(() => expect(wrapper.find('select[name="chomboId"]').exists()).toBe(true))
+    expect(opcionesDe(wrapper, 'chomboId')).toStrictEqual(esperados)
+  })
+
+  it('ninguno de los cinco se queda con el asiento solo', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+    const esperados = ['Ana · Este', 'Bob · Sur', 'Carla · Oeste', 'David · Norte']
+
+    await vi.waitFor(() => expect(textosDe(wrapper, 'riichi')).toStrictEqual(esperados))
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await vi.waitFor(() => expect(wrapper.find('select[name="winnerId"]').exists()).toBe(true))
+
+    const listados = [
+      textosDe(wrapper, 'riichi'),
+      opcionesDe(wrapper, 'winnerId'),
+      opcionesDe(wrapper, 'discarderId'),
+    ]
+
+    for (const listado of listados) {
+      expect(listado).not.toStrictEqual([])
+      for (const etiqueta of ETIQUETAS) {
+        expect(listado).not.toContain(etiqueta)
+      }
+    }
+  })
+
+  /**
+   * Caso límite 3 de la spec: las casillas de ganador también llevan el nombre y su asiento. No es
+   * uno de los cinco desplegables, pero dejarlo solo con el asiento haría que la lista deGanadores
+   * dijera una cosa distinta de los desplegables de al lado.
+   */
+  it('las casillas de ganador llevan el nombre con su asiento', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await vi.waitFor(() => expect(wrapper.find('select[name="winnerId"]').exists()).toBe(true))
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="winner-south"]').text()).toContain('Bob · Sur'),
+    )
+  })
+})
+
+/**
+ * T08 · RF-24.2. El color de la diferencia con los tokens del tema —`--color-mahjong-positive` y
+ * `--color-mahjong-negative`— y con ninguna otra clase de color. El cero es el caso que se olvida: un
+ * empate repartido deja a alguien con diferencia cero, y ese jugador **no** va en ningún color (caso
+ * límite 2). Por eso el barrido da positivo, cero y negativo de una sola vez.
+ */
+describe('T08 · color del delta', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('positivo, cero y negativo, y el cero sin ninguna clase de color', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    // Nadie se ha movido: ni una clase de color en las cuatro filas.
+    await vi.waitFor(() => expect(wrapper.find('[data-test="mesa"]').exists()).toBe(true))
+    expect(mesaDe(wrapper).every((fila) => fila.clasesDelta.length === 0)).toBe(true)
+
+    /**
+     * Un empate con los cuatro en tenpai deja la diferencia a cero en todas partes. Es el caso límite
+     * 2: se ve el cero, pero **sin** clase, porque un cero no suma ni resta.
+     */
+    await wrapper.find('select[name="resultType"]').setValue('ryuukyoku')
+    await vi.waitFor(() => expect(wrapper.find('fieldset[data-test="tenpai"]').exists()).toBe(true))
+    for (const seat of SEATS) {
+      await toggleTenpaiPlayer(wrapper, seat)
+    }
+
+    expect(mesaDe(wrapper).map((fila) => fila.delta)).toStrictEqual(['0', '0', '0', '0'])
+    expect(mesaDe(wrapper).every((fila) => fila.clasesDelta.length === 0)).toBe(true)
+
+    // Y el mismo empate con solo el Este en tenpai reparte en los dos signos.
+    await toggleTenpaiPlayer(wrapper, 'north')
+    await toggleTenpaiPlayer(wrapper, 'west')
+    await toggleTenpaiPlayer(wrapper, 'south')
+    await nextTick()
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').delta).toBe('+3000'))
+
+    expect(filaDe(wrapper, 'east').clasesDelta).toStrictEqual(['text-mahjong-positive'])
+    expect(filaDe(wrapper, 'north').delta).toBe('-1000')
+    expect(filaDe(wrapper, 'north').clasesDelta).toStrictEqual(['text-mahjong-negative'])
+  })
+
+  it('las únicas clases de color que se aplican son las de los dos tokens del tema', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 0, fu: 30 }, ['tanyao'])
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').delta).toBe('+1500'))
+
+    const aplicadas = new Set(SEATS.flatMap((seat) => filaDe(wrapper, seat).clasesDelta))
+
+    expect(aplicadas).toStrictEqual(new Set(['text-mahjong-positive', 'text-mahjong-negative']))
+  })
+
+  it('las dos clases salen de los tokens --color-mahjong-* del tema, no de colores sueltos', async () => {
+    const css = await readFile(join(import.meta.dirname, '..', 'styles', 'main.css'), 'utf8')
+
+    expect(css).toContain('--color-mahjong-positive:')
+    expect(css).toContain('--color-mahjong-negative:')
+  })
+})
+
+/**
+ * T09 · RF-24.3. La marca de localía se pinta con la localía **real** que calcula `domain/replay.ts`
+ * y no con el asiento Este —hasta `specs/002` el motor miraba `seat === 'east'` y a partir del primer
+ * cambio de localía todo se invertía. El barrido fija los cuatro asientos, y **el caso del Sur es el
+ * que discrimina**: con la localía en el Este, una etiqueta pintada desde el asiento Este daría razón
+ * correcta y el test pasaría igual (003-qa.md, C5).
+ */
+describe('T09 · marcador de localía', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('la marca va con la localía real en los cuatro asientos', async () => {
+    for (const [indice, turnos] of [0, 1, 2, 3].entries()) {
+      fakeReset()
+
+      const game = await createGame()
+      await partidaSinLocalia(game, turnos)
+
+      const { wrapper } = mountTurnForm(game)
+      // La marca de localía depende del estado derivado, que llega de la query del juego: sin el
+      // panel de la mano siguiente no hay localía que pintar y el barrido no comprobaría nada.
+      await vi.waitFor(() => expect(wrapper.find('[data-test="next-hand"]').exists()).toBe(true))
+
+      const esperado = SEATS[indice]
+
+      expect(esperado).toBeTypeOf('string')
+      expect(mesaDe(wrapper).map((fila) => fila.esLocalia)).toStrictEqual(
+        SEATS.map((seat) => seat === esperado),
+      )
+
+      wrapper.unmount()
+    }
+  })
+
+  it('con la localía en el Sur la marca no acompaña al Este', async () => {
+    const game = await createGame()
+    await partidaSinLocalia(game, 1)
+
+    const { wrapper } = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(wrapper, 'south').esLocalia).toBe(true))
+
+    expect(filaDe(wrapper, 'east').esLocalia).toBe(false)
+    expect(filaDe(wrapper, 'south').esLocalia).toBe(true)
+    expect(filaDe(wrapper, 'west').esLocalia).toBe(false)
+    expect(filaDe(wrapper, 'north').esLocalia).toBe(false)
+  })
+
+  it('un chombo no mueve la marca (caso límite 5)', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').esLocalia).toBe(true))
+    await wrapper.find('select[name="resultType"]').setValue('chombo')
+    await wrapper.find('select[name="chomboId"]').setValue(playerOf(game, 3))
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    expect(filaDe(wrapper, 'east').esLocalia).toBe(true)
+    expect(filaDe(wrapper, 'north').esLocalia).toBe(false)
+  })
+})
+
+/**
+ * T10 · RF-24.4. El viento de la mano en curso junto al nombre de cada jugador. El viento de ronda
+ * solo gira cuando la localía vuelve al asiento Este, así que el test tiene que cruzar esa vuelta
+ * entera: verlo antes y después del giro es lo que demuestra que **cambia**.
+ */
+describe('T10 · viento por asiento', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('los cuatro asientos muestran el viento, y cambia al cruzar la vuelta del Este', async () => {
+    const game = await createGame()
+
+    const antes = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(antes.wrapper, 'east').viento).toBe('Ronda Este'))
+
+    expect(mesaDe(antes.wrapper).map((fila) => fila.viento)).toStrictEqual([
+      'Ronda Este',
+      'Ronda Este',
+      'Ronda Este',
+      'Ronda Este',
+    ])
+    antes.wrapper.unmount()
+
+    // La localía va perdiendo la mano una y otra vez: Este → Sur → Oeste → Norte → Este. Al volver al
+    // Este el viento de ronda gira con ella (`domain/rules.ts` · `nextHand`).
+    await partidaSinLocalia(game, 4)
+
+    const despues = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(despues.wrapper, 'east').viento).toBe('Ronda Sur'))
+
+    expect(mesaDe(despues.wrapper).map((fila) => fila.viento)).toStrictEqual([
+      'Ronda Sur',
+      'Ronda Sur',
+      'Ronda Sur',
+      'Ronda Sur',
+    ])
+  })
+
+  it('el viento va junto al nombre, en la misma fila', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').nombre).toBe('Ana'))
+
+    const fila = filaDe(wrapper, 'east')
+
+    expect(fila.texto).toContain('Ana')
+    expect(fila.texto).toContain('Este')
+    expect(fila.texto).toContain('Ronda Este')
+  })
+})
+/** Las casillas de yaku que se están pintando ahora mismo, en el orden en que salen. */
+function yakuVisibles(wrapper: ReturnType<typeof mountTurnForm>['wrapper']): readonly string[] {
+  return casillasDeYaku(wrapper).map((input) => input.attributes('value') ?? '')
+}
+
+function casillasDeYaku(wrapper: ReturnType<typeof mountTurnForm>['wrapper']) {
+  return wrapper.findAll('[data-test="yaku-options"] input[type="checkbox"]')
+}
+
+/** Las casillas de yaku que están marcadas ahora mismo. */
+function yakuMarcados(wrapper: ReturnType<typeof mountTurnForm>['wrapper']): readonly string[] {
+  return casillasDeYaku(wrapper)
+    .filter((input) => (input.element as HTMLInputElement).checked)
+    .map((input) => input.attributes('value') ?? '')
+}
+
+/** Deja el formulario en una mano con tsumo, que es donde aparecen yaku, buscador y totales. */
+async function abrirMano(
+  wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+  game: GameRecord,
+): Promise<void> {
+  await wrapper.find('select[name="resultType"]').setValue('tsumo')
+  await vi.waitFor(() => expect(wrapper.find('select[name="winnerId"]').exists()).toBe(true))
+  await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+}
+
+/**
+ * T11 · RF-25.1. El buscador deja solo las entradas cuyo nombre **contiene** lo escrito. Lo que hay
+ * que fijar es sobre todo lo que **no** cambia: filtrar es mirar la lista, no la captura, así que un
+ * yaku ya marcado tiene que sobrevivir a un filtro sin coincidencia y volver marcado cuando el
+ * filtro se limpia.
+ */
+describe('T11 · buscador de yaku', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('escribir texto deja solo las entradas que lo contienen', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await vi.waitFor(() => expect(yakuVisibles(wrapper).length).toBeGreaterThan(10))
+
+    const todos = yakuVisibles(wrapper)
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('riic')
+
+    // «Riichi» y «Suucha Riichi» contienen lo escrito, y no es una coincidencia exacta: por eso son
+    // dos y no uno.
+    expect(yakuVisibles(wrapper)).toStrictEqual(
+      todos.filter((id) => ['riichi', 'suuchaRiichi'].includes(id)),
+    )
+    expect(yakuVisibles(wrapper)).toContain('riichi')
+    expect(yakuVisibles(wrapper)).toContain('suuchaRiichi')
+    expect(yakuVisibles(wrapper)).not.toContain('tanyao')
+  })
+
+  it('no le importan las mayúsculas ni los espacios de alrededor', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await vi.waitFor(() => expect(yakuVisibles(wrapper).length).toBeGreaterThan(10))
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('  Riic  ')
+
+    expect(yakuVisibles(wrapper)).toStrictEqual(['riichi', 'suuchaRiichi'])
+  })
+
+  it('un filtro sin coincidencia deja la lista vacía sin perder lo marcado', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await wrapper.find('input[type="checkbox"][value="riichi"]').setValue(true)
+    await wrapper.find('input[type="checkbox"][value="tanyao"]').setValue(true)
+    await declareRiichi(wrapper, 'east')
+    await vi.waitFor(() => expect(wrapper.find('[data-test="han-total"]').text()).toContain('2'))
+
+    const totalAntes = wrapper.find('[data-test="han-total"]').text()
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('qqqqqq')
+
+    expect(yakuVisibles(wrapper)).toStrictEqual([])
+    // El total del catálogo sigue igual: lo marcado no se ha perdido, solo está fuera de la vista.
+    expect(wrapper.find('[data-test="han-total"]').text()).toBe(totalAntes)
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('')
+
+    expect(yakuMarcados(wrapper)).toStrictEqual(['riichi', 'tanyao'])
+  })
+
+  it('limpiar el filtro devuelve todas las entradas', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await vi.waitFor(() => expect(yakuVisibles(wrapper)).toHaveLength(YAKU_CATALOG.length))
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('riic')
+    expect(yakuVisibles(wrapper).length).toBeLessThan(YAKU_CATALOG.length)
+
+    await wrapper.find('input[name="yakuFilter"]').setValue('')
+
+    expect(yakuVisibles(wrapper)).toHaveLength(YAKU_CATALOG.length)
+  })
+})
+
+/**
+ * T12 · RF-25.2. Las casillas de riichi en horizontal. Lo que RF-25.2 exige es que **no cambien de
+ * comportamiento**, así que el test tiene que seguir marcándolas y desmarcarlas igual que antes: la
+ * orientación es una clase y no debe poder mover nada más.
+ */
+describe('T12 · captura sin buscar', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('las casillas de riichi se pintan en una fila, no en una columna', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    const fieldset = wrapper.find('fieldset[data-test="riichi"]')
+
+    /**
+     * `happy-dom` no calcula layout, así que «en una fila» no se puede mirar en la caja: se mira en
+     * las clases que la ponen en fila, y en la ausencia de las que la pondrían en columna.
+     */
+    expect(fieldset.classes()).toContain('flex')
+    expect(fieldset.classes()).toContain('flex-wrap')
+    expect(fieldset.classes()).not.toContain('flex-col')
+    expect(fieldset.findAll('label')).toHaveLength(4)
+  })
+
+  it('siguen marcando y desmarcando igual que antes del cambio de orientación', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 0, fu: 30 }, ['tanyao'])
+
+    const este = casillaDe(wrapper, 'riichi', 'east')
+    const sur = casillaDe(wrapper, 'riichi', 'south')
+
+    await este.setValue(true)
+    expect((este.element as HTMLInputElement).checked).toBe(true)
+    expect((sur.element as HTMLInputElement).checked).toBe(false)
+
+    await este.setValue(false)
+    expect((este.element as HTMLInputElement).checked).toBe(false)
+
+    await este.setValue(true)
+    await sur.setValue(true)
+    expect(wrapper.find('fieldset[data-test="riichi"]').findAll('input:checked')).toHaveLength(2)
+
+    // Y lo marcado sigue llegando al turno guardado, que es donde se nota si el cambio de
+    // orientación movió algo más que la maquetación.
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    const record = wrapper.emitted('saved')?.[0]?.[0] as { riichiDeclaredBy: readonly PlayerId[] }
+
+    expect(record.riichiDeclaredBy).toStrictEqual([playerOf(game, 0), playerOf(game, 1)])
+  })
+})
+
+/**
+ * T18, T19 y T20 · RF-28.1 a RF-28.3 y RF-28.5. La ayuda se abre desde la pantalla de captura, su
+ * texto **sale del markdown del repositorio** —no de una plantilla duplicada— y abrir o cerrar los
+ * modales no puede perder lo capturado ni el borrador de `localStorage`.
+ *
+ * El test que lee el disco es el mismo patrón que `handValue.test.ts:302`: el texto de la interfaz no
+ * puede dejar de ser el del fichero, o editar uno sin el otro pasa inadvertido.
+ */
+describe('T18-T20 · ayuda y referencia', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+    document.body.innerHTML = ''
+  })
+
+  it('abre el modal de ayuda desde la captura y pinta el markdown del disco (RF-28.1, RF-28.2)', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('[data-test="help-open"]').trigger('click')
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain('Cómo rellenar el formulario de turnos')
+
+    const enDisco = await readFile(
+      fileURLToPath(new NodeURL('../docs/ayuda-turnos.md', import.meta.url)),
+      'utf8',
+    )
+    expect(dialog?.textContent).toContain(
+      enDisco
+        .replace(/^#+ .*$/gm, '')
+        .trim()
+        .slice(0, 80),
+    )
+  })
+
+  it('cierra el modal con Escape y con el botón, sin tocar BaseDialog (RF-28.1)', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('[data-test="help-open"]').trigger('click')
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    await wrapper.find('[data-test="help-open"]').trigger('click')
+    const closeButton = document.body.querySelector('[aria-label="Cerrar"]')
+    expect(closeButton).not.toBeNull()
+    closeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('el lenguaje de la tabla de puntuación se abre como segundo modal (RF-28.4)', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('[data-test="score-table-open"]').trigger('click')
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    const image = document.body.querySelector('[role="dialog"] img')
+    expect(image).not.toBeNull()
+    expect(image?.getAttribute('src')).toContain('tabla-puntuacion')
+    /**
+     * La imagen se ve, no se recorta: el diálogo se ensancha para caberla en lugar de dejarla con un
+     * `overflow-x`. `max-w-3xl` son 768px menos el padding, más que los 700px que pide el club.
+     */
+    expect(dialog?.classList.contains('max-w-3xl')).toBe(true)
+    expect(image?.classList.contains('w-full')).toBe(true)
+    expect(image?.classList.contains('max-w-none')).toBe(false)
+  })
+
+  it('abrir y cerrar la ayuda no pierde el formulario ni el borrador (RF-28.5)', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+    authenticate(pinia)
+
+    await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 3, fu: 40 }, ['tanyao'])
+    await wrapper.find('input[name="yakuFilter"]').setValue('tan')
+
+    const draftKey = `mahjongbu.turn-draft.${game.id}`
+    const draftAntes = localStorage.getItem(draftKey)
+
+    await wrapper.find('[data-test="help-open"]').trigger('click')
+    await nextTick()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+
+    expect((wrapper.find('input[name="doraCount"]').element as HTMLInputElement).value).toBe('3')
+    expect((wrapper.find('input[name="fu"]').element as HTMLInputElement).value).toBe('40')
+    expect((wrapper.find('input[name="yakuFilter"]').element as HTMLInputElement).value).toBe('tan')
+    expect(localStorage.getItem(draftKey)).toBe(draftAntes)
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+})
+
+/**
+ * T21 · RF-28.4. La imagen de la tabla de puntuación vive en `src/assets/tabla-puntuacion.png` y su
+ * ruta está declarada. El test falla si el fichero no está: borrarla o moverla tiene que romper algo,
+ * y ese algo es este test además del build. Lo que **no** puede comprobarse es que su contenido
+ * coincida con `docs/domain.md` §4.2: es una instantánea, no una fuente.
+ */
+describe('T21 · la tabla de puntuación existe (RF-28.4)', () => {
+  it('el fichero de la imagen está en su ruta declarada', async () => {
+    const ruta = fileURLToPath(new NodeURL('../assets/tabla-puntuacion.png', import.meta.url))
+    const bytes = await readFile(ruta)
+
+    expect(bytes.byteLength).toBeGreaterThan(0)
   })
 })

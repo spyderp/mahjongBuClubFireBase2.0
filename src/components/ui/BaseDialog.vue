@@ -7,8 +7,10 @@ withDefaults(
     title: string
     closeOnEscape?: boolean
     closeOnBackdrop?: boolean
+    /** Anchura máxima del diálogo. Por defecto `max-w-md`, que es el ancho de siempre. */
+    maxWidth?: string
   }>(),
-  { closeOnEscape: true, closeOnBackdrop: true },
+  { closeOnEscape: true, closeOnBackdrop: true, maxWidth: 'max-w-md' },
 )
 
 const emit = defineEmits<{ close: [] }>()
@@ -31,7 +33,8 @@ function handleKeydown(event: KeyboardEvent): void {
         role="dialog"
         aria-modal="true"
         :aria-label="title"
-        class="mt-16 w-full max-w-md rounded border border-mahjong-border bg-mahjong-surface p-4 shadow-2xl"
+        class="mt-16 w-full rounded border border-mahjong-border bg-mahjong-surface p-4 shadow-2xl"
+        :class="maxWidth"
         @keydown="closeOnEscape ? handleKeydown($event) : undefined"
       >
         <header class="mb-3 flex items-center justify-between gap-2">

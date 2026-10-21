@@ -139,6 +139,50 @@ describe('T33 · claves de los rechazos de specs/002', () => {
   })
 })
 
+/**
+ * T23 · RF-29.3. `aborted` solo se alcanza al finalizar por debajo del mínimo (RF-9.2 de 001); la
+ * transición de abandono devuelve `unfinished` (`domain/game.ts:107`), que se pinta como
+ * «Inconclusa» (`es.ts:251`). La palabra «abortada» solo puede describir el estado `aborted`, así
+ * que nunca puede aparecer en un mensaje ligado a `unfinished`.
+ *
+ * Se recorre `es.ts` en **disco** para que la comprobación no dependa de cómo se lea el catálogo: si
+ * alguien vuelve a escribir que una partida abandonada queda «abortada», esto falla.
+ */
+describe('T23 · ninguna cadena dice «abortada» para el estado unfinished (RF-29.2, RF-29.3)', () => {
+  it('el aviso de abortar dice «inconclusa» y no «abortada»', () => {
+    expect(catalogo.gamesView.confirmAbandon).toBeTypeOf('string')
+    expect(catalogo.gamesView.confirmAbandonHint.toLowerCase()).toContain('inconclusa')
+    expect(catalogo.gamesView.confirmAbandonHint.toLowerCase()).not.toContain('abortad')
+  })
+
+  it('la palabra «abortada» solo describe el estado aborted, no unfinished', () => {
+    expect(catalogo.gamesView.statuses.aborted.toLowerCase()).toContain('abortad')
+    expect(catalogo.gamesView.statuses.unfinished.toLowerCase()).not.toContain('abortad')
+  })
+
+  it('ningún mensaje de es.ts liga «abortad» a lo inconcluso, leído desde el disco', async () => {
+    const source = await readFile(
+      join(import.meta.dirname, '..', 'i18n', 'locales', 'es.ts'),
+      'utf8',
+    )
+
+    const consistent = source
+      .split('\n')
+      .filter((line) => line.toLowerCase().includes('abortad'))
+      .every((line) => !line.toLowerCase().includes('inconclus'))
+
+    expect(consistent).toBe(true)
+  })
+})
+
+/** T22 · RF-29.1: el botón dice «abortar» y ninguna pantalla usa «abandonar» para esa acción. */
+describe('T22 · el botón de la acción dice «abortar» (RF-29.1)', () => {
+  it('gamesView.abandon contiene «abortar» y no «abandonar», y el estado sigue siendo inconcluso', () => {
+    expect(catalogo.gamesView.abandon.toLowerCase()).toContain('abortar')
+    expect(catalogo.gamesView.abandon.toLowerCase()).not.toContain('abandonar')
+  })
+})
+
 function expectAllLeavesAreText(catalog: MessageCatalog): void {
   forEachLeaf(catalog, (value) => {
     expect(typeof value).toBe('string')

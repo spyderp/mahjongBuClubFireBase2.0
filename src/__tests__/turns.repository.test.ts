@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { doc, getDoc } from 'firebase/firestore'
 import { getDb } from '@/app/firebase'
+import { PARTIDA_CON_CHOMBO, conIdsDe } from '@/__tests__/fixtures/partidas'
 import { gamesRepository } from '@/data/games.repository'
 import { DataError } from '@/data/errors'
 import {
+  capturedFieldsBefore,
   capturedTurnOf,
   FIRESTORE_DOCUMENT_LIMIT_BYTES,
   toTurnSnapshot,
@@ -15,11 +17,13 @@ import type {
   TurnAuditEntry,
   TurnCorrectEntry,
   TurnRecord,
+  UpdateTurnPatch,
   UpdateTurnPatchField,
 } from '@/data/turns.repository'
+import type { CapturedTurn, ReplayedTurn } from '@/domain/replay'
 import { replayTurns } from '@/domain/replay'
 import { toGameId, toPlayerId } from '@/domain/types'
-import type { Seat } from '@/domain/types'
+import type { GameId, Seat } from '@/domain/types'
 import type { PlayerId } from '@/domain/types'
 import { fakeAdvanceSeconds, fakeGetDb, fakeNow, fakeReset } from '@/test-utils/fakeFirestore'
 
@@ -1288,5 +1292,382 @@ describe('RF-18.18 · una partida marcada por bancarrota solo admite el borrado 
     const error = await turnsRepository.remove(game.id, 1).catch((caught: unknown) => caught)
 
     expect((error as DataError).code).toBe('finalizedGame')
+  })
+})
+
+/**
+ * T02 · RF-30.5 y RF-19.11 de `specs/002`: el registro de correcciones **no lleva campo de motivo**.
+ * No es una convención de estilo —en una corrección de captura el diff ya dice qué pasó—, sino algo
+ * que hay que **afirmar**: añadir `reason` al tipo sería un cambio de una línea que ningún otro test
+ * detectaría, porque nadie llega a escribirlo. La aserción de tipo vive en
+ * `turns.repository.test-d.ts` (constitution VI.1); aquí se comprueba que la lista de campos
+ * corregibles y las dos clases de entrada que se escriben no lo traen.
+ */
+describe('sin campo de motivo', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  /** Cualquier nombre de campo que suene a motivo, en el idioma del repositorio y en el del club. */
+  const RAZON = /reason|razon|motivo|motive|why|porque/iu
+
+  it('ni la lista de campos corregibles ni las entradas del registro lo declaran', async () => {
+    expect(TURN_PATCH_FIELDS.filter((field) => RAZON.test(field))).toStrictEqual([])
+
+    const game = await seedGame()
+    await turnsRepository.create(game.id, { ...turnInput(1), fu: 20 })
+    await turnsRepository.create(game.id, turnInput(2))
+
+    const corregido = await turnsRepository.update(game.id, 1, { fu: 30 }, correctionOf(0))
+    const borrable = turnAt(await turnsRepository.list(game.id), 1)
+
+    await turnsRepository.remove(game.id, 2)
+
+    /**
+     * El borrado del turno siguiente vive en el registro del anterior (RF-19.6), así que las dos
+     * clases de entrada del mismo array se comprueban juntas: `audit[]` es una unión y ninguna de sus
+     * dos ramas puede llevar motivo.
+     */
+    const conBorrado = await turnsRepository.update(
+      game.id,
+      1,
+      { honba: 0 },
+      {
+        by: 'user-3',
+        expectedAuditCount: corregido.audit.length,
+        deletedTurn: { turnNo: 2, before: toTurnSnapshot(borrable) },
+      },
+    )
+
+    const entradaDeCorreccion = correction(conBorrado.audit[0])
+    const entradaDeBorrado = conBorrado.audit[1]
+
+    expect(Object.keys(entradaDeCorreccion ?? {})).not.toContain('reason')
+    expect(entradaDeCorreccion?.changes.every((change) => !('reason' in change))).toBe(true)
+
+    if (entradaDeBorrado === undefined || entradaDeBorrado.action !== 'delete') {
+      throw new Error('el registro no guardó la entrada del borrado del turno 2')
+    }
+
+    expect(Object.keys(entradaDeBorrado)).not.toContain('reason')
+    expect(Object.keys(entradaDeBorrado.before)).not.toContain('reason')
+  })
+})
+
+/**
+ * T04 y T05 · RF-30.1 a RF-30.3. Los valores que un turno tenía **antes de su última corrección** se
+ * leen de la entrada más reciente del registro, y solo de sus campos **capturados**: los derivados —
+ * ronda, localía, contador, valores de la mano y deltas— no se restituyen porque los recalcula el
+ * sistema (RF-18.13), y volver a escribir a mano un valor calculado contradice esa regla en el mismo
+ * cambio que la cumple.
+ *
+ * Por eso «reconstruir la versión anterior» no es un deshacer campo a campo: es un **recorrido**. Lo
+ * repone `capturedFieldsBefore`, y lo demás sale de volver a derivar la partida.
+ */
+describe('versión anterior de un turno', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  /** La partida con la que se reconstruye: con chombo, porque es lo único que deja la localía quieta. */
+  const PARTIDA = conIdsDe(PARTIDA_CON_CHOMBO, tableAtStart())
+
+  /**
+   * Captura la partida completa con lo que el recorrido calcula, como haría el formulario: los
+   * derivados no se escriben a mano porque no se pueden conocer antes de recorrer (RF-18.13), y los
+   * ganadores viajan en `value[]` porque es de ahí de donde `capturedTurnOf` los lee.
+   */
+  async function guardarPartida(gameId: GameId, partida: readonly CapturedTurn[]): Promise<void> {
+    const recorrido = replayTurns(tableAtStart(), partida, 1)
+
+    if (!recorrido.ok) {
+      throw new Error(`la partida no se puede recorrer: ${recorrido.reason}`)
+    }
+
+    for (const [index, derivado] of recorrido.outcome.turns.entries()) {
+      const captured = partida[index]
+
+      if (captured === undefined) {
+        throw new Error(`el recorrido devolvió el turno ${derivado.turnNo} sin captura`)
+      }
+
+      await turnsRepository.create(gameId, {
+        turnNo: derivado.turnNo,
+        wind: derivado.wind,
+        dealerId: derivado.dealerId,
+        honba: derivado.honba,
+        resultType: captured.resultType,
+        yaku: [...captured.hand.yaku],
+        yakuHan: captured.hand.yakuHan,
+        yakuHanOverride: 0,
+        doraCount: captured.hand.doraCount,
+        fu: captured.hand.fu,
+        tenpai: [...captured.tenpai],
+        riichiDeclaredBy: [...captured.riichiDeclaredBy],
+        riichiSticks: derivado.riichiSticks,
+        value: derivado.values,
+        deltas: derivado.deltas,
+        capturedBy: 'user-1',
+        isRenchan: false,
+        isFinalTurn: false,
+        discarderId: captured.discarderId,
+        chomboId: captured.chomboId,
+      })
+    }
+  }
+
+  /**
+   * El recorrido de la partida tal y como está escrita, con el adaptador de `data/`. `correccion`
+   * simula el parche de quien corrige: el turno indicado entra ya corregido en el recorrido, que es
+   * lo que hace `useGameTurns.correctTurn` (RF-18.7).
+   */
+  function recorrer(
+    turns: readonly TurnRecord[],
+    correccion?: { readonly turnNo: number; readonly patch: UpdateTurnPatch },
+  ): readonly ReplayedTurn[] {
+    const result = replayTurns(
+      tableAtStart(),
+      turns.map((turn) =>
+        correccion !== undefined && turn.turnNo === correccion.turnNo
+          ? capturedTurnOf(turn, correccion.patch)
+          : capturedTurnOf(turn),
+      ),
+      1,
+    )
+
+    if (!result.ok) {
+      throw new Error(
+        `la partida no se puede recorrer: ${result.reason} en el turno ${result.turnNo}`,
+      )
+    }
+
+    return result.outcome.turns
+  }
+
+  function delTurno(turns: readonly ReplayedTurn[], turnNo: number): ReplayedTurn {
+    const found = turns.find((turn) => turn.turnNo === turnNo)
+
+    if (found === undefined) {
+      throw new Error(`el recorrido no devolvió el turno ${turnNo}`)
+    }
+
+    return found
+  }
+
+  /** El turno con los valores que tenían sus campos capturados antes de la última corrección. */
+  function restaurado(turn: TurnRecord): TurnRecord {
+    return { ...turn, ...capturedFieldsBefore(turn) }
+  }
+
+  /**
+   * Corrige como lo hace `useGameTurns.correctTurn`: el parche de quien corrige **más** los derivados
+   * que el recorrido acaba de calcular (RF-18.8). Es lo que hace que el turno corregido guarde en su
+   * registro tanto el campo capturado como los derivados que cambiaron con él.
+   */
+  async function corregir(
+    gameId: GameId,
+    turnNo: number,
+    patch: UpdateTurnPatch,
+  ): Promise<TurnRecord> {
+    const stored = await turnsRepository.list(gameId)
+    const objetivo = stored.find((turn) => turn.turnNo === turnNo)
+
+    if (objetivo === undefined) {
+      throw new Error(`no hay turno ${turnNo} que corregir`)
+    }
+
+    const own = delTurno(recorrer(stored, { turnNo, patch }), turnNo)
+
+    return turnsRepository.update(
+      gameId,
+      turnNo,
+      {
+        ...patch,
+        wind: own.wind,
+        dealerId: own.dealerId,
+        honba: own.honba,
+        riichiSticks: own.riichiSticks,
+        value: own.values,
+        deltas: own.deltas,
+      },
+      correctionOf(objetivo.audit.length, {
+        by: 'user-que-corrige',
+        derived: ['wind', 'dealerId', 'honba', 'riichiSticks', 'value', 'deltas'],
+      }),
+    )
+  }
+
+  /** Los turnos guardados, con el indicado restituido a su versión anterior. */
+  function conTurnoRestaurado(
+    stored: readonly TurnRecord[],
+    turnNo: number,
+  ): readonly TurnRecord[] {
+    return stored.map((turn) => (turn.turnNo === turnNo ? restaurado(turn) : turn))
+  }
+
+  it('devuelve el valor anterior de un campo capturado', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, { ...turnInput(1), doraCount: 1, fu: 20 })
+
+    const corregido = await turnsRepository.update(game.id, 1, { fu: 30 }, correctionOf(0))
+
+    expect(capturedFieldsBefore(corregido)).toStrictEqual({ fu: 20 })
+  })
+
+  it('devuelve los de dos campos corregidos a la vez', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, {
+      ...turnInput(1),
+      doraCount: 1,
+      fu: 20,
+      tenpai: [P1],
+    })
+
+    const corregido = await turnsRepository.update(
+      game.id,
+      1,
+      { tenpai: [P1, toPlayerId('p2')], fu: 30, doraCount: 2 },
+      correctionOf(0),
+    )
+
+    expect(capturedFieldsBefore(corregido)).toStrictEqual({ doraCount: 1, fu: 20, tenpai: [P1] })
+  })
+
+  it('una corrección que solo tocó derivados devuelve vacío', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, turnInput(1))
+
+    const corregido = await turnsRepository.update(
+      game.id,
+      1,
+      {
+        wind: 'south',
+        dealerId: toPlayerId('p2'),
+        honba: 2,
+        value: [
+          {
+            playerId: toPlayerId('p2'),
+            han: 2,
+            fu: 30,
+            basicPoints: 640,
+            points: 2600,
+            deltas: [],
+          },
+        ],
+        deltas: [{ playerId: toPlayerId('p2'), delta: 2600 }],
+      },
+      correctionOf(0, { derived: ['wind', 'dealerId', 'honba', 'value', 'deltas'] }),
+    )
+
+    expect(changedFields(corregido.audit[0])).toStrictEqual([
+      'wind',
+      'dealerId',
+      'honba',
+      'value',
+      'deltas',
+    ])
+    expect(capturedFieldsBefore(corregido)).toStrictEqual({})
+  })
+
+  /**
+   * El **bote de riichi** es un derivado más, y de los que la spec enumera peor: RF-18.8 lo cuenta
+   * con la ronda, la localía, el contador, el valor de la mano y los deltas, y `useGameTurns` lo marca
+   * como `derived` en cada corrección porque lo recalcula el recorrido. El enumerado de RF-30.2 no lo
+   * menciona, y por eso la lista de derivados de este módulo se le quedó corta: `riichiSticks` se
+   * colaba como si lo hubiera escrito una persona.
+   *
+   * Devolverlo es restituir un valor calculado a mano, que es justo lo que RF-30.2 veta en el mismo
+   * cambio que lo cumple (plan.md §5.1, decisión 1). El caso no es raro: un turno con riichi
+   * declarado lleva el bote consigo, así que cualquier corrección de ese turno lo toca.
+   */
+  it('una corrección que solo tocó el bote de riichi devuelve vacío', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, turnInput(1))
+
+    const corregido = await turnsRepository.update(
+      game.id,
+      1,
+      { riichiSticks: 1 },
+      correctionOf(0, { derived: ['riichiSticks'] }),
+    )
+
+    expect(changedFields(corregido.audit[0])).toStrictEqual(['riichiSticks'])
+    expect(capturedFieldsBefore(corregido)).toStrictEqual({})
+  })
+
+  it('un borrado anotado no tacha la última corrección', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, { ...turnInput(1), fu: 20 })
+    await turnsRepository.create(game.id, turnInput(2))
+
+    const corregido = await turnsRepository.update(game.id, 1, { fu: 30 }, correctionOf(0))
+    const borrable = turnAt(await turnsRepository.list(game.id), 1)
+
+    await turnsRepository.remove(game.id, 2)
+
+    const conBorrado = await turnsRepository.update(
+      game.id,
+      1,
+      { honba: 0 },
+      {
+        by: 'user-3',
+        expectedAuditCount: corregido.audit.length,
+        deletedTurn: { turnNo: 2, before: toTurnSnapshot(borrable) },
+      },
+    )
+
+    const guardado = turnAt(await turnsRepository.list(game.id), 0)
+
+    // El borrado del turno siguiente no cambia ningún campo de este, así que no puede hacer de
+    // pantalla de la entrada de corrección que sí los cambió.
+    expect(conBorrado.audit.at(-1)?.action).toBe('delete')
+    expect(capturedFieldsBefore(guardado)).toStrictEqual({ fu: 20 })
+  })
+
+  it('los derivados de la versión anterior salen de recorrer la partida, no del registro', async () => {
+    const game = await seedGame()
+
+    await guardarPartida(game.id, PARTIDA)
+
+    // La partida tal y como se capturó: la referencia contra la que se juzga la reconstrucción.
+    const referencia = recorrer(await turnsRepository.list(game.id))
+
+    /**
+     * El turno 3 es un tsumo de la localía. Cambiarle las dora cambia lo que cobra y lo que pagan los
+     * otros tres, así que sus derivados cambian aunque la captura no los mencione.
+     */
+    const corregido = await corregir(game.id, 3, { doraCount: 5 })
+    const cambios = correction(corregido.audit[0])?.changes ?? []
+
+    expect(cambios.map((change) => change.field)).toContain('doraCount')
+    // Los derivados que cambiaron también quedan anotados: son la tentación de la que RF-30.2 protege.
+    expect(cambios.some((change) => change.derived)).toBe(true)
+
+    // Lo que devuelve `capturedFieldsBefore` es **solo** el campo capturado.
+    expect(capturedFieldsBefore(corregido)).toStrictEqual({ doraCount: 0 })
+
+    const corregidos = await turnsRepository.list(game.id)
+    const reconstruido = recorrer(conTurnoRestaurado(corregidos, 3))
+
+    // Reponer el campo capturado y volver a derivar reproduce la partida de antes de la corrección,
+    // no el documento corregido.
+    expect(reconstruido).toStrictEqual(referencia)
+    expect(reconstruido).not.toStrictEqual(recorrer(corregidos))
+
+    /**
+     * Un turno anterior cambia **después**. El `from` que el registro del turno 3 tiene anotado para
+     * sus derivados era un valor calculado bajo el estado viejo, así que a estas alturas ya está
+     * viejo: aplicarlo daría un turno que no cuadra con la partida en la que se está reconstruyendo.
+     * Por eso la reconstrucción no lo usa, y por eso el cambio de después no la invalida.
+     */
+    await corregir(game.id, 1, { tenpai: PLAYERS.map((player) => player.playerId) })
+
+    const despues = await turnsRepository.list(game.id)
+    const trasElCambio = recorrer(conTurnoRestaurado(despues, 3))
+    const delTerceroAnotado = cambios.find((change) => change.field === 'deltas')?.from
+
+    expect(capturedFieldsBefore(turnAt(despues, 2))).toStrictEqual({ doraCount: 0 })
+    expect(trasElCambio).not.toStrictEqual(recorrer(despues))
+    expect(delTurno(trasElCambio, 3).deltas).not.toStrictEqual(delTerceroAnotado)
   })
 })

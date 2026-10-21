@@ -307,6 +307,61 @@ describe('T86 · GameDetailPage', () => {
 })
 
 /**
+ * T22 y T23 · RF-29.1 a RF-29.3. El club pidió por nombre la palabra «abortar» para el botón, y que
+ * el resultado se describa siempre como **inconclusa**. El aviso anterior mentía: decía «abortada»
+ * para una transición que devuelve `unfinished` (`domain/game.ts:107`), que se pinta como
+ * «Inconclusa» (`es.ts:251`). «Abortar» y `aborted` dejan de ser sinónimos.
+ */
+describe('T22-T23 · abortar deja inconclusa', () => {
+  beforeEach(() => {
+    fakeReset()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    mounted?.unmount()
+    mounted = undefined
+  })
+
+  it('el botón dice «abortar» y ninguna pantalla dice «abandonar» para esa acción (RF-29.1)', async () => {
+    vi.setSystemTime(new Date(fakeNow().seconds * 1000))
+    const players = await createPlayers()
+    const game = await createGame(players)
+
+    fakeAdvanceSeconds(8 * DAY)
+    vi.setSystemTime(new Date(fakeNow().seconds * 1000))
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Abortar partida'))
+    expect(wrapper.text()).not.toContain('Abandonar')
+
+    vi.useRealTimers()
+  })
+
+  it('el aviso dice que queda inconclusa y no que queda abortada (RF-29.2, RF-29.3)', async () => {
+    vi.setSystemTime(new Date(fakeNow().seconds * 1000))
+    const players = await createPlayers()
+    const game = await createGame(players)
+
+    fakeAdvanceSeconds(8 * DAY)
+    vi.setSystemTime(new Date(fakeNow().seconds * 1000))
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Abortar partida'))
+    await clickButton(wrapper, 'Abortar partida')
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent?.toLowerCase()).toContain('inconclusa')
+    expect(dialog?.textContent?.toLowerCase()).not.toContain('abortada')
+
+    vi.useRealTimers()
+  })
+})
+
+/**
  * T39 · RF-23.3. El detalle enseña la ronda, la localía y el honba de la mano siguiente **sin
  * pedirlos a nadie**: los deriva `domain/replay.ts` y salen de la misma fuente que rellena el
  * formulario, así que no pueden discrepar.

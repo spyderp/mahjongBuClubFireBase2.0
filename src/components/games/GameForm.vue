@@ -70,9 +70,18 @@ const errors = reactive<{
   guests: null,
 })
 
-/** RF-1.3: el invitado también puede volver a sentarse, así que la lista los incluye. */
+/**
+ * RF-27.1: al crear una partida solo se ofrecen los jugadores **dados de alta**. Un jugador retirado
+ * no puede sentarse, así que no se lista; el invitado cierra la lista, como siempre (RF-1.3).
+ *
+ * Esto no rompe RF-2.9 de 001 —repetir jugador entre partidas abiertas—: ese caso trata de jugadores
+ * activos que ya están en otro tablero, y siguen apareciendo. Aquí solo se excluye a quien está de
+ * baja, que tampoco podría jugar la partida que se está creando.
+ */
 const playerOptions = computed<readonly SelectOption[]>(() => [
-  ...(players.value ?? []).map((player) => ({ value: player.id, label: player.name })),
+  ...(players.value ?? [])
+    .filter((player) => player.active)
+    .map((player) => ({ value: player.id, label: player.name })),
   { value: GUEST_SEAT, label: t('gamesView.guestOption') },
 ])
 

@@ -507,6 +507,19 @@ está acotado, pero **no** es una garantía del servidor. Si algún día hace fa
 - Los tests importan con el alias `@/`, nunca en relativo, y quedan excluidos de la cobertura.
 - Las aserciones de tipo van en `<módulo>.test-d.ts` y las comprueba `npm run typecheck`, no Vitest.
 - Las partidas completas de prueba, reutilizadas por varios módulos, van en `src/__tests__/fixtures/`.
+- **La puerta de una especificación que no escribe en `domain/` es otra.** El umbral de
+  constitution IV.1 —100 % de `src/domain/`— mide código puro, y una spec de interfaz no lo toca: su
+  puerta no puede ser ese porcentaje, porque daría verde siempre. Su puerta es doble: `git diff
+  --name-only src/domain` **vacío** —el dominio congelado, medido con `git diff` y no con cobertura— y
+  **un test por comportamiento de pantalla**, para que no se añada interfaz sin comprobar. Sin
+  escribirlo, la siguiente especificación de interfaz copia la puerta vacía y hereda un criterio que no
+  muerde.
+- **Esa segunda mitad tiene guardián.** `src/__tests__/trazabilidad.test.ts` lee la lista de RF de
+  `specs/003/spec.md` desde el disco y **falla enumerando los RF que ningún test cita**. Un RF
+  implementado y marcado `[x]` sin una sola aserción —lo que pasó con RF-26— deja de ser un verde
+  silencioso. Un RF cuya comprobación sea una revisión visual acordada se declara con su motivo en el
+  mapa `VISUAL_REVIEW` de ese fichero, y el propio test exige que la spec lo declare y que no tenga ya
+  un test; si se le escribe uno, el mapa sobra y el test pide retirarlo.
 
 ### Naming
 

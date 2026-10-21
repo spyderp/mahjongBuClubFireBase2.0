@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useGameTurns } from '@/composables/useGameTurns'
-import { useGames } from '@/composables/useGames'
+import { replayOutcomeOf, useGames } from '@/composables/useGames'
 import { gamesRepository } from '@/data/games.repository'
 import { playersRepository } from '@/data/players.repository'
 import { recalculate } from '@/domain/stats/recalculate'
 import { rankingsRepository } from '@/data/rankings.repository'
-import type { ReplayPlayer } from '@/domain/replay'
+import type { ReplayedTurn, ReplayPlayer } from '@/domain/replay'
 import { replayTurns } from '@/domain/replay'
+import type { HandState } from '@/domain/rules'
+import { initialHandState } from '@/domain/rules'
 import { type Seat } from '@/domain/types'
-import type { GameId, PlayerId, SeasonId } from '@/domain/types'
+import type { GameId, GameLength, PlayerId, SeasonId } from '@/domain/types'
 import { fakeReset } from '@/test-utils/fakeFirestore'
 import { HANCHAN_CON_TODO, conIdsDe } from '@/__tests__/fixtures/partidas'
 import { withColada } from '@/test-utils/colada'
@@ -70,11 +72,12 @@ async function openGame(
   seasonId: SeasonId,
   table: readonly ReplayPlayer[],
   date: number,
+  gameLength: GameLength = 'hanchan',
 ): Promise<GameId> {
   const game = await gamesRepository.create({
     seasonId,
     date: atDay(date),
-    gameLength: 'hanchan',
+    gameLength,
     ruleset: 'mahjongSouls',
     rulesetVersion: '1.0',
     startPoints: 25000,
@@ -412,3 +415,83 @@ async function corregirEnOrden(
     throw caught
   }
 }
+
+/**
+ * T01 · RF-30.4 y RNF-7. `gameLength` es el **piso de finalización** —`minTurns` da cuatro u ocho— y
+ * no una longitud esperada: el recorrido de `domain/replay.ts` ni siquiera lo recibe, así que la
+ * independencia es real por construcción.
+ *
+ * Por construcción no es «comprobado», y este barrido es lo que la convierte en comprobado: recorre
+ * **toda** la cadena —la partida guardada con su longitud, los turnos leídos de ella y el recorrido
+ * que sale de esos turnos— con la misma secuencia de más de cuatro manos en los dos modos. Hasta
+ * `specs/002` toda partida de más de cuatro manos del repositorio era `hanchan` y toda `tonpuusen` se
+ * quedaba en su mínimo, que es justo la razón por la que esta mitad del requisito quedaba sin
+ * comprobar (003-qa.md, B2).
+ */
+describe('gameLength', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  /** Los tres resultados del recorrido que RF-30.4 declara idénticos, ordenados para poder comparar. */
+  type Recorrido = {
+    readonly gameLength: GameLength
+    readonly turnos: readonly ReplayedTurn[]
+    readonly marcador: readonly { readonly playerId: PlayerId; readonly score: number }[]
+    readonly nextHand: HandState
+  }
+
+  async function recorridoDe(gameId: GameId): Promise<Recorrido> {
+    const juego = await gamesRepository.getById(gameId)
+
+    if (juego === null) {
+      throw new Error(`la partida ${gameId} no se puede leer`)
+    }
+
+    const { turns, scores, nextHand } = replayOutcomeOf(
+      juego,
+      await turnsRepository.list(gameId),
+      1,
+    )
+
+    return {
+      gameLength: juego.gameLength,
+      turnos: turns,
+      marcador: [...scores].sort((a, b) => a.playerId.localeCompare(b.playerId)),
+      nextHand,
+    }
+  }
+
+  it('la misma secuencia de más de cuatro manos recorre igual en tonpuusen y en hanchan', async () => {
+    const mesa = await seededTable()
+    const seasonId = await seedSeason()
+    const partida = conIdsDe(HANCHAN_CON_TODO, mesa)
+    const documentos = documentsOf(partida, mesa, 'user-ana')
+
+    const tonpuusenId = await openGame(seasonId, mesa, 10, 'tonpuusen')
+    const hanchanId = await openGame(seasonId, mesa, 11, 'hanchan')
+
+    await capture(tonpuusenId, documentos)
+    await capture(hanchanId, documentos)
+
+    const tonpuusen = await recorridoDe(tonpuusenId)
+    const hanchan = await recorridoDe(hanchanId)
+
+    // El caso que el barrido necesita: más de cuatro manos, porque con cuatro o menos ninguna de las
+    // dos longitudes habría podido comportarse distinto.
+    expect(documentos.length).toBeGreaterThan(4)
+    expect(tonpuusen.turnos).toHaveLength(documentos.length)
+
+    // Y que las dos partidas sean de verdad de dos longitudes distintas: comparar una consigo misma
+    // daría verde siempre.
+    expect([tonpuusen.gameLength, hanchan.gameLength]).toStrictEqual(['tonpuusen', 'hanchan'])
+
+    expect(tonpuusen.turnos).toStrictEqual(hanchan.turnos)
+    expect(tonpuusen.marcador).toStrictEqual(hanchan.marcador)
+    expect(tonpuusen.nextHand).toStrictEqual(hanchan.nextHand)
+
+    // La comparación no puede pasar porque los dos recorridos hayan resultado triviales.
+    expect(tonpuusen.turnos).not.toStrictEqual([])
+    expect(tonpuusen.nextHand).not.toStrictEqual(initialHandState())
+  })
+})

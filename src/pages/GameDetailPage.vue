@@ -21,7 +21,6 @@ const gameId = computed(() => toGameId(props.gameId))
 const { state: gameState, refresh: refreshGame } = useGameDetail(gameId)
 const { data: turns, nextHand } = useGameTurns(gameId)
 const { data: players } = usePlayers()
-const { finalizeGame, unfinalizeGame, abandonGame } = useGames()
 
 /**
  * Constitution VI.2: `data` de la consulta de detalle es `GameRecord | null | undefined`, así
@@ -37,6 +36,8 @@ const game = computed<GameRecord | undefined>(() => {
 
   return state.data ?? undefined
 })
+
+const { finalizeGame, unfinalizeGame, abandonGame } = useGames()
 
 const finalizeDialog = ref(false)
 const unfinalizeDialog = ref(false)
@@ -166,6 +167,50 @@ const canCapture = computed(
     game.value.ruleset === 'mahjongSouls',
 )
 
+/**
+ * T13 · RF-26.1. El jugador sobre el que se ha hecho clic en el marcador. Mientras hay uno elegido,
+ * se pinta su diferencia contra cada rival en la fila de ese rival; al volver a pulsarlo se quita.
+ */
+const selectedPlayerId = ref<PlayerId | null>(null)
+
+function selectPlayer(playerId: PlayerId): void {
+  selectedPlayerId.value = selectedPlayerId.value === playerId ? null : playerId
+}
+
+/** El marcador en pie de un jugador, o `undefined` si no juega esta partida. */
+function scoreOf(playerId: PlayerId): number | undefined {
+  return standings.value.find((entry) => entry.playerId === playerId)?.score
+}
+
+/**
+ * RF-26.1 y RF-26.2: la diferencia del jugador elegido contra el rival de una fila es su marcador
+ * menos el del rival. Con marcadores iguales es **cero** —nunca `null`—, así que la celda nunca
+ * queda vacía; si alguno de los dos no está en el marcador, también es cero.
+ */
+function differenceAgainst(rivalId: PlayerId): number {
+  const selected = selectedPlayerId.value
+
+  if (selected === null) {
+    return 0
+  }
+
+  const mine = scoreOf(selected)
+  const theirs = scoreOf(rivalId)
+
+  if (mine === undefined || theirs === undefined) {
+    return 0
+  }
+
+  return mine - theirs
+}
+
+/** La diferencia con su signo, como el marcador: `+23200`, `-5200`, `0`. */
+function differenceTextOf(rivalId: PlayerId): string {
+  const difference = differenceAgainst(rivalId)
+
+  return difference > 0 ? `+${difference}` : String(difference)
+}
+
 async function confirmFinalize(): Promise<void> {
   if (game.value === undefined) {
     return
@@ -251,6 +296,9 @@ function now(): { seconds: number; nanoseconds: number } {
                 <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.player') }}</th>
                 <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.seat') }}</th>
                 <th class="px-2 py-1 text-end font-medium">{{ t('gamesView.finalScore') }}</th>
+                <th v-if="selectedPlayerId !== null" class="px-2 py-1 text-end font-medium">
+                  {{ t('gamesView.difference') }}
+                </th>
                 <th v-if="game.status === 'finalized'" class="px-2 py-1 text-end font-medium">
                   {{ t('gamesView.position') }}
                 </th>
@@ -260,11 +308,27 @@ function now(): { seconds: number; nanoseconds: number } {
               <tr
                 v-for="entry in standings"
                 :key="entry.playerId"
-                class="border-b border-mahjong-border last:border-b-0"
+                class="cursor-pointer border-b border-mahjong-border last:border-b-0"
+                :data-test="`standing-${entry.playerId}`"
+                @click="selectPlayer(entry.playerId)"
               >
                 <td class="px-2 py-1">{{ nameOf(entry.playerId) }}</td>
                 <td class="px-2 py-1">{{ t(`gamesView.seats.${entry.seat}`) }}</td>
                 <td class="px-2 py-1 text-end">{{ entry.score }}</td>
+                <td
+                  v-if="selectedPlayerId !== null && entry.playerId !== selectedPlayerId"
+                  class="px-2 py-1 text-end"
+                  data-test="player-difference"
+                >
+                  {{ differenceTextOf(entry.playerId) }}
+                </td>
+                <td
+                  v-else-if="selectedPlayerId !== null && entry.playerId === selectedPlayerId"
+                  class="px-2 py-1 text-end"
+                  data-test="player-difference"
+                >
+                  0
+                </td>
                 <td v-if="entry.position !== null" class="px-2 py-1 text-end">
                   {{ t(`uma.${entry.position}`) }}
                 </td>

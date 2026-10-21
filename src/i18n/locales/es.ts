@@ -259,24 +259,26 @@ const catalogo = {
     stands: 'Marcador',
     finalScore: 'Marcador final',
     position: 'Posición',
+    /** T13 · RF-26.1: la diferencia de puntos de un jugador respecto de su partida anterior. */
+    difference: 'Diferencia',
     riichiPot: 'Fichas de riichi en el bote',
     turns: 'Turnos',
     capturedBy: 'Capturado por',
     noTurns: 'Aún no hay turnos guardados.',
     finalize: 'Finalizar',
     unfinalize: 'Deshacer finalización',
-    abandon: 'Abandonar partida',
+    abandon: 'Abortar partida',
     guestOption: 'Añadir invitado…',
     staleWarning:
-      'Esta partida lleva más de 7 días sin actividad: se puede seguir capturando o abandonarla.',
+      'Esta partida lleva más de 7 días sin actividad: se puede seguir capturando o abortarla.',
     confirm: 'Confirmar',
     cancel: 'Cancelar',
     confirmFinalize: '¿Finalizar la partida? El resultado quedará fijado.',
     confirmFinalizeHint: 'La partida pasará a finalizada y no admitirá más turnos.',
     confirmUnfinalize: '¿Deshacer la finalización?',
     confirmUnfinalizeHint: 'La partida volverá a abierta y se borrará el resultado.',
-    confirmAbandon: '¿Abandonar la partida?',
-    confirmAbandonHint: 'La partida se marcará como abortada y no contará en las estadísticas.',
+    confirmAbandon: '¿Abortar la partida?',
+    confirmAbandonHint: 'La partida quedará inconclusa y no contará en las estadísticas.',
     tonpuusen: 'Tonpuusen',
     hanchan: 'Hanchan',
     openWarnings: 'Jugadores ya presentes en otra partida abierta:',
@@ -363,6 +365,28 @@ const catalogo = {
       dealerSeat: 'Localía',
       honba: 'Contadores',
     },
+    /**
+     * RF-24 · La mesa. Los cuatro datos que la pantalla de captura no mostraba hasta `specs/003`:
+     * el nombre de cada jugador con su asiento, su diferencia con color, la marca de localía y el
+     * viento de la mano en curso.
+     */
+    mesa: {
+      title: 'La mesa',
+      /** El nombre va delante y el asiento detrás: uno dice a quién, el otro sitúa a quién. */
+      playerWithSeat: '{name} · {seat}',
+      windOfHand: 'Ronda {wind}',
+      dealer: 'Localía',
+    },
+    /** RF-28.1 y RF-28.4: los dos modales de consulta de la pantalla de captura. */
+    help: {
+      title: 'Ayuda para capturar turnos',
+      open: 'Ayuda',
+    },
+    scoreTable: {
+      title: 'Tabla de puntuación',
+      open: 'Tabla de puntuación',
+      alt: 'Tabla de puntuación del club',
+    },
     resultType: 'Resultado',
     resultTypes: {
       tsumo: 'Tsumo',
@@ -377,6 +401,9 @@ const catalogo = {
     addWinner: 'Añadir ganador',
     discarder: 'Descartador',
     yaku: 'Yaku',
+    /** RF-25.1: el buscador filtra la lista, no la captura, así que lo marcado no se pierde. */
+    yakuFilter: 'Buscar yaku',
+    yakuNoResults: 'Ningún yaku contiene ese texto. Los que ya estaban marcados siguen marcados.',
     /** T36 · RF-22.5: el total se deriva del catálogo y el ajuste va aparte, como delta. */
     yakuHan: 'Han de yaku',
     yakuHanOverride: 'Ajuste manual de han',

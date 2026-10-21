@@ -466,6 +466,75 @@ export function toTurnSnapshot(record: TurnRecord): TurnSnapshot {
   return values
 }
 
+/**
+ * Los campos **derivados** de un turno, que son los que RF-30.2 nombra y los que la reconstrucción
+ * no puede tomar del registro: la ronda, la localía, el contador, los valores de la mano y sus
+ * deltas. La lista es **cerrada** y es la de la spec; el resto de `TURN_PATCH_FIELDS` es lo que
+ * escribió quien capturó.
+ *
+ * El bote de riichi va aquí por el mismo motivo que los otros cinco, aunque el enumerado de RF-30.2
+ * no lo mencione: RF-18.8 lo cuenta entre los que «el sistema vuelve a calcular» y `useGameTurns` lo
+ * marca como `derived` en cada corrección. Devolverlo como si lo hubiera escrito una persona sería
+ * restituir un valor calculado a mano —que es lo que RF-30.2 veta— y además dejaría el turno
+ * anterior con un bote que el recorrido ya no ha visto.
+ *
+ * La lista es la misma que la de `useGameTurns` —`DERIVED_FIELDS`—, y las dos tienen que coincidir
+ * campo a campo: si se separan, la reconstrucción restituye un derivado que el sistema va a
+ * recalcular y encima lo da por bueno.
+ */
+const DERIVED_TURN_FIELDS = [
+  'wind',
+  'dealerId',
+  'honba',
+  'riichiSticks',
+  'value',
+  'deltas',
+] as const satisfies readonly UpdateTurnPatchField[]
+
+function isDerivedTurnField(field: UpdateTurnPatchField): boolean {
+  return DERIVED_TURN_FIELDS.some((derived) => derived === field)
+}
+
+/**
+ * RF-30.1 y RF-30.2: los valores que tenía un turno **antes de su última corrección**, leídos de la
+ * entrada más reciente del registro y **solo de sus campos capturados**.
+ *
+ * No es un deshacer campo a campo. Los derivados no se restituyen, porque RF-18.13 los recalcula el
+ * sistema y volver a escribir a mano un valor calculado contradice esa regla en el mismo cambio que la
+ * cumple. Quien use esto repone lo que escribió una persona y vuelve a derivar la partida: es un
+ * parche para `capturedTurnOf` más un recorrido, no un `update` con el `from` de todo.
+ *
+ * Se lee la última entrada **de corrección** y no la última entrada a secas, porque el borrado del
+ * turno siguiente (RF-19.6) comparte el mismo array y no cambia ningún campo de este: si tapara la
+ * corrección anterior, «la versión anterior» dejaría de existir justo cuando más hace falta.
+ *
+ * Es una proyección de un documento, como `capturedTurnOf` y `toTurnSnapshot`, y por eso vive aquí y
+ * no en `domain/`.
+ */
+export function capturedFieldsBefore(record: TurnRecord): Readonly<Partial<UpdateTurnPatch>> {
+  const last = record.audit.findLast((entry) => entry.action === 'correct')
+
+  if (last === undefined) {
+    return {}
+  }
+
+  const previous: Partial<Record<UpdateTurnPatchField, unknown>> = {}
+
+  for (const change of last.changes) {
+    if (!isDerivedTurnField(change.field)) {
+      previous[change.field] = change.from
+    }
+  }
+
+  /**
+   * El único punto del repositorio donde `unknown` se estrecha: `from` es `unknown` porque un turno
+   * mezcla números, textos, booleanos y listas y no hay un tipo que los agrupe, pero el `field` que
+   * trae la entrada es una clave de `TURN_PATCH_FIELDS` y el valor lo escribió `update` leyendo ese
+   * mismo campo del documento. El cast va en la salida, una vez, y no en la firma.
+   */
+  return previous as Partial<UpdateTurnPatch>
+}
+
 function toRecord(snapshot: QueryDocumentSnapshot): TurnRecord {
   return toTurnRecord(snapshot.data() as unknown as TurnData)
 }
