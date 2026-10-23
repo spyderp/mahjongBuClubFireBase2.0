@@ -584,26 +584,53 @@ function now(): { seconds: number; nanoseconds: number } {
               :key="turn.turnNo"
               class="flex flex-col gap-1 px-3 py-2 text-sm"
             >
-              <div class="flex items-center justify-between">
-                <span>
-                  <span class="font-medium">T{{ turn.turnNo }}</span>
-                  <span class="text-mahjong-muted">
-                    · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+              <div class="flex flex-col gap-1">
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                  <span class="flex items-center gap-2">
+                    <span class="font-medium">T{{ turn.turnNo }}</span>
+                    <span class="text-mahjong-muted">
+                      · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+                    </span>
+                    <span class="text-mahjong-muted">
+                      · {{ t('gamesView.capturedBy') }}: {{ nameOf(turn.capturedBy as PlayerId) }}
+                    </span>
                   </span>
-                  <span class="text-mahjong-muted">
-                    · {{ t('gamesView.capturedBy') }}: {{ turn.capturedBy }}
+                  <BaseButton
+                    v-if="turn.turnNo === (turns?.length ?? 0) && session.status === 'authenticated' && game.status === 'open'"
+                    :data-test="`delete-turn-${turn.turnNo}`"
+                    variant="ghost"
+                    size="sm"
+                    @click="deleteTurnNo = turn.turnNo; deleteTurnDialog = true"
+                  >
+                    {{ t('gamesView.deleteTurn') }}
+                  </BaseButton>
+                </div>
+
+                <!-- Yaku registrados -->
+                <div v-if="turn.yaku?.length" class="ml-6 flex flex-wrap gap-1 text-xs text-mahjong-muted">
+                  <span class="font-medium">{{ t('turnForm.yaku') }}:</span>
+                  <span v-for="(yakuId, idx) in turn.yaku" :key="`${turn.turnNo}-${idx}`" class="px-1.5 py-0.5 rounded bg-mahjong-border text-mahjong-text">
+                    {{ t(`yaku.${yakuId}`) }}
+                    <span v-if="turn.yakuHanOverride !== 0" class="ml-1 text-mahjong-accent">
+                      ({{ turn.yakuHanOverride > 0 ? '+' : '' }}{{ turn.yakuHanOverride }})
+                    </span>
                   </span>
-                </span>
-                <BaseButton
-                  v-if="turn.turnNo === (turns?.length ?? 0) && session.status === 'authenticated' && game.status === 'open'"
-                  :data-test="`delete-turn-${turn.turnNo}`"
-                  variant="ghost"
-                  size="sm"
-                  @click="deleteTurnNo = turn.turnNo; deleteTurnDialog = true"
-                >
-                  {{ t('gamesView.deleteTurn') }}
-                </BaseButton>
+                  <span class="text-mahjong-muted ml-1">· Total: {{ turn.yakuHan }} han</span>
+                </div>
+
+                <!-- Marcador del turno: ganadores y perdedores -->
+                <div class="ml-6 flex flex-wrap gap-2 text-sm">
+                  <span 
+                    v-for="delta in turn.deltas" 
+                    :key="delta.playerId"
+                    :data-test="`turn-delta-${turn.turnNo}-${delta.playerId}`"
+                    :class="delta.delta > 0 ? 'text-mahjong-positive font-medium' : delta.delta < 0 ? 'text-mahjong-negative font-medium' : 'text-mahjong-muted'"
+                  >
+                    {{ nameOf(delta.playerId) }} {{ delta.delta > 0 ? '+' : '' }}{{ delta.delta }}
+                  </span>
+                </div>
               </div>
+
               <ul
                 v-if="turn.audit.length > 0"
                 class="flex flex-col gap-1 text-xs text-mahjong-muted"

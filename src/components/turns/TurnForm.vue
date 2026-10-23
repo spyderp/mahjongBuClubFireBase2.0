@@ -757,6 +757,24 @@ function seatOf(playerId: PlayerId): Seat | undefined {
   return table.value.find((player) => player.playerId === playerId)?.seat
 }
 
+function seatOfActualLocation(initialSeat: Seat, dealerLocation: Seat): Seat | undefined {
+  const seatMap: Record<Seat, number> = {
+    east: 0,
+    south: 1,
+    west: 2,
+    north: 3,
+  }
+
+  const seats: Seat[] = ['east', 'south', 'west', 'north']
+
+  const initialSeatIndex = seatMap[initialSeat]
+  const dealerLocationIndex = seatMap[dealerLocation]
+
+  // Calculate the modular distance counter-clockwise (using + 4 to handle negatives safely)
+  const windIndex = (initialSeatIndex - dealerLocationIndex + 4) % 4
+
+  return seats[windIndex]
+}
 /**
  * RF-24.1: lo que ofrecen los **cinco** lugares donde se elige a un jugador —ganador, descartador,
  * tenpai, riichi y chombo—. El nombre va delante porque es lo que dice a quién se está eligiendo, y
@@ -1357,7 +1375,11 @@ function handleCancel(): void {
               :class="windBadgeClass(row.seat)"
               data-test="mesa-wind-badge"
             >
-              {{ t(`gamesView.seats.${row.seat}`) }}
+              {{
+                dealerId === ''
+                  ? ''
+                  : t(`gamesView.seats.${seatOfActualLocation(row.seat, seatOf(dealerId))}`)
+              }}
             </span>
           </div>
           <div class="flex items-baseline justify-between gap-2">
