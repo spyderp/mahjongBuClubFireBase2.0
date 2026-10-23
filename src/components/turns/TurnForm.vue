@@ -19,6 +19,7 @@ import type { HandResultType, HandSituation, HandValueInput } from '@/domain/han
 import { isRenchan, minTurns } from '@/domain/rules'
 import type { HandOutcome } from '@/domain/rules'
 import { checkSquare, resolveTurn } from '@/domain/turn'
+import { seatOfActualLocation } from '@/domain/mahjong'
 import type { TurnInput, TurnPlayer, TurnResolution, TurnWinnerInput } from '@/domain/turn'
 import type { PlayerId, ResultType, Seat, Wind } from '@/domain/types'
 import { validateChiitoitsuFu, validateWindYaku, YAKU_CATALOG } from '@/domain/yaku'
@@ -757,24 +758,6 @@ function seatOf(playerId: PlayerId): Seat | undefined {
   return table.value.find((player) => player.playerId === playerId)?.seat
 }
 
-function seatOfActualLocation(initialSeat: Seat, dealerLocation: Seat): Seat | undefined {
-  const seatMap: Record<Seat, number> = {
-    east: 0,
-    south: 1,
-    west: 2,
-    north: 3,
-  }
-
-  const seats: Seat[] = ['east', 'south', 'west', 'north']
-
-  const initialSeatIndex = seatMap[initialSeat]
-  const dealerLocationIndex = seatMap[dealerLocation]
-
-  // Calculate the modular distance counter-clockwise (using + 4 to handle negatives safely)
-  const windIndex = (initialSeatIndex - dealerLocationIndex + 4) % 4
-
-  return seats[windIndex]
-}
 /**
  * RF-24.1: lo que ofrecen los **cinco** lugares donde se elige a un jugador —ganador, descartador,
  * tenpai, riichi y chombo—. El nombre va delante porque es lo que dice a quién se está eligiendo, y
@@ -1378,7 +1361,9 @@ function handleCancel(): void {
               {{
                 dealerId === ''
                   ? ''
-                  : t(`gamesView.seats.${seatOfActualLocation(row.seat, seatOf(dealerId))}`)
+                  : t(
+                      `gamesView.seats.${seatOf(dealerId) ? seatOfActualLocation(row.seat, seatOf(dealerId)!) : row.seat}`
+                    )
               }}
             </span>
           </div>
