@@ -19,7 +19,10 @@ import type {
   TurnRecord,
   UpdateTurnPatch,
   UpdateTurnPatchField,
+  WinnerHandBreakdown,
+  WinnerHandContext,
 } from '@/data/turns.repository'
+import type { TurnValue } from '@/domain/turn'
 import type { CapturedTurn, ReplayedTurn } from '@/domain/replay'
 import { replayTurns } from '@/domain/replay'
 import { toGameId, toPlayerId } from '@/domain/types'
@@ -1669,5 +1672,270 @@ describe('versión anterior de un turno', () => {
     expect(capturedFieldsBefore(turnAt(despues, 2))).toStrictEqual({ doraCount: 0 })
     expect(trasElCambio).not.toStrictEqual(recorrer(despues))
     expect(delTurno(trasElCambio, 3).deltas).not.toStrictEqual(delTerceroAnotado)
+  })
+})
+
+/**
+ * T05 · RF-32.4, RF-37.1 y RF-37.2. El documento del turno guarda el contexto de la mano y, en un
+ * ron múltiple, el desglose de cada ganador. Los dos campos son **opcionales**: un turno escrito
+ * antes de `specs/004` no los tiene, se lee sin ellos y no se re-puntúa (RF-37.3).
+ */
+describe('T05 · el documento del turno: el contexto y el desglose por ganador', () => {
+  const P2 = toPlayerId('p2')
+  const P3 = toPlayerId('p3')
+
+  const CONTEXT: readonly WinnerHandContext[] = [
+    { playerId: P2, isClosedHand: true, hasKan: false },
+    { playerId: P3, isClosedHand: false, hasKan: true },
+  ]
+
+  const BREAKDOWN: readonly WinnerHandBreakdown[] = [
+    {
+      playerId: P2,
+      yaku: ['tanyao'],
+      yakuHan: 1,
+      yakuHanOverride: 0,
+      doraCount: 1,
+      fu: 30,
+    },
+    {
+      playerId: P3,
+      yaku: ['tanyao'],
+      yakuHan: 1,
+      yakuHanOverride: 0,
+      doraCount: 0,
+      fu: 40,
+    },
+  ]
+
+  function valueOf(playerId: PlayerId, fu: number): TurnValue {
+    return {
+      playerId,
+      han: 1,
+      fu,
+      basicPoints: 240,
+      points: 1000,
+      deltas: [],
+    }
+  }
+
+  function ronTurnInput(turnNo: number): CreateTurnInput {
+    return {
+      ...turnInput(turnNo),
+      resultType: 'ron',
+      yaku: ['tanyao'],
+      yakuHan: 1,
+      doraCount: 1,
+      fu: 30,
+      discarderId: toPlayerId('p4'),
+      value: [valueOf(P2, 30), valueOf(P3, 40)],
+    }
+  }
+
+  it('el turno guarda el contexto y el desglose por ganador', async () => {
+    const game = await seedGame()
+
+    const created = await turnsRepository.create(game.id, {
+      ...ronTurnInput(1),
+      handContext: CONTEXT,
+      winnerHands: BREAKDOWN,
+    })
+
+    expect(created.handContext).toStrictEqual(CONTEXT)
+    expect(created.winnerHands).toStrictEqual(BREAKDOWN)
+    expect(await storedField(game.id, 1, 'handContext')).toStrictEqual(CONTEXT)
+    expect(await storedField(game.id, 1, 'winnerHands')).toStrictEqual(BREAKDOWN)
+  })
+
+  it('un turno escrito antes de 004 se lee sin los campos nuevos', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, ronTurnInput(1))
+
+    const stored = await turnsRepository.list(game.id)
+
+    expect(stored[0]?.handContext).toBeUndefined()
+    expect(stored[0]?.winnerHands).toBeUndefined()
+    expect(await storedField(game.id, 1, 'handContext')).toBeUndefined()
+  })
+
+  it('capturedTurnOf proyecta el contexto y el desglose a la captura', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, {
+      ...ronTurnInput(1),
+      handContext: CONTEXT,
+      winnerHands: BREAKDOWN,
+    })
+
+    const captured = capturedTurnOf((await turnsRepository.list(game.id))[0] as TurnRecord)
+
+    expect(captured.hand).toStrictEqual({
+      yaku: ['tanyao'],
+      yakuHan: 1,
+      doraCount: 1,
+      fu: 30,
+      isClosedHand: true,
+      hasKan: false,
+      yakuHanOverride: 0,
+    })
+    expect(captured.winnerHands).toStrictEqual([
+      {
+        playerId: P2,
+        hand: {
+          yaku: ['tanyao'],
+          yakuHan: 1,
+          yakuHanOverride: 0,
+          doraCount: 1,
+          fu: 30,
+          isClosedHand: true,
+          hasKan: false,
+        },
+      },
+      {
+        playerId: P3,
+        hand: {
+          yaku: ['tanyao'],
+          yakuHan: 1,
+          yakuHanOverride: 0,
+          doraCount: 0,
+          fu: 40,
+          isClosedHand: false,
+          hasKan: true,
+        },
+      },
+    ])
+  })
+
+  it('el registro audita el desglose de cada ganador por separado', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, {
+      ...ronTurnInput(1),
+      handContext: CONTEXT,
+      winnerHands: BREAKDOWN,
+    })
+
+    const corrected = await turnsRepository.update(
+      game.id,
+      1,
+      {
+        winnerHands: [
+          BREAKDOWN[0] as WinnerHandBreakdown,
+          { ...(BREAKDOWN[1] as WinnerHandBreakdown), fu: 70 },
+        ],
+      },
+      correctionOf(0),
+    )
+
+    expect(correction(corrected.audit[0])?.changes).toStrictEqual([
+      {
+        field: 'winnerHands',
+        from: BREAKDOWN[1],
+        to: { ...(BREAKDOWN[1] as WinnerHandBreakdown), fu: 70 },
+        derived: false,
+      },
+    ])
+  })
+
+  it('capturedFieldsBefore devuelve el valor anterior de cada ganador', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, {
+      ...ronTurnInput(1),
+      handContext: CONTEXT,
+      winnerHands: BREAKDOWN,
+    })
+
+    const corrected = await turnsRepository.update(
+      game.id,
+      1,
+      {
+        winnerHands: [
+          BREAKDOWN[0] as WinnerHandBreakdown,
+          { ...(BREAKDOWN[1] as WinnerHandBreakdown), fu: 70 },
+        ],
+      },
+      correctionOf(0),
+    )
+
+    expect(capturedFieldsBefore(corrected)).toStrictEqual({ winnerHands: BREAKDOWN })
+  })
+})
+
+/**
+ * T06 · RF-32.5, RF-37.3, RF-37.4 y RF-37.5. Los turnos escritos **antes de 004** no se migran ni se
+ * re-derivan: se leen con la forma de siempre y el recorrido produce **el mismo** resultado que
+ * antes de que existiera el contexto por ganador.
+ */
+describe('T06 · el turno anterior a 004 se lee igual', () => {
+  const P2 = toPlayerId('p2')
+  const P3 = toPlayerId('p3')
+  const P4 = toPlayerId('p4')
+
+  const DELTAS = [
+    { playerId: toPlayerId('p1'), delta: -500 },
+    { playerId: P2, delta: 1100 },
+    { playerId: P3, delta: -300 },
+    { playerId: P4, delta: -300 },
+  ]
+
+  /** Un turno escrito antes de 004: un tsumo de 1 han 30 fu, sin los campos nuevos. */
+  function legacyTurnInput(turnNo: number): CreateTurnInput {
+    return {
+      ...turnInput(turnNo),
+      resultType: 'tsumo',
+      yaku: ['tanyao'],
+      yakuHan: 1,
+      fu: 30,
+      value: [
+        {
+          playerId: P2,
+          han: 1,
+          fu: 30,
+          basicPoints: 240,
+          points: 1100,
+          deltas: DELTAS,
+        },
+      ],
+      deltas: DELTAS,
+    }
+  }
+
+  it('un turno sin los campos nuevos se re-deriva con el mismo resultado', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, legacyTurnInput(1))
+
+    const stored = await turnsRepository.list(game.id)
+    const result = replayTurns(
+      tableAtStart(),
+      stored.map((turn) => capturedTurnOf(turn)),
+      1,
+    )
+
+    expect(result.ok).toBe(true)
+
+    if (!result.ok) {
+      return
+    }
+
+    expect(result.outcome.turns[0]?.values).toStrictEqual(stored[0]?.value)
+    expect(result.outcome.turns[0]?.deltas).toStrictEqual(stored[0]?.deltas)
+  })
+
+  it('un turno antiguo no gana los campos nuevos al re-derivarse', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, legacyTurnInput(1))
+
+    const stored = await turnsRepository.list(game.id)
+    const captured = capturedTurnOf(stored[0] as TurnRecord)
+
+    expect(captured.hand).toStrictEqual({ yaku: ['tanyao'], yakuHan: 1, doraCount: 0, fu: 30 })
+    expect(captured.winnerHands).toBeUndefined()
+  })
+
+  it('rulesetVersion no cambia: los turnos antiguos no se re-puntúan', async () => {
+    const game = await seedGame()
+    await turnsRepository.create(game.id, legacyTurnInput(1))
+
+    const reread = await gamesRepository.getById(game.id)
+
+    expect(reread?.rulesetVersion).toBe('1.0')
   })
 })

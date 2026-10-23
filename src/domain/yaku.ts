@@ -35,6 +35,9 @@ export type NormalYakuId =
   | 'honitsu'
   | 'nagashiMangan'
   | 'chinitsu'
+  | 'chanta'
+  | 'ittsu'
+  | 'sanshokuDoujun'
   | WindYakuId
 
 /**
@@ -102,10 +105,16 @@ export interface YakuDefinition {
   readonly id: YakuId
   readonly category: YakuCategory
   /**
-   * Han del yaku. Para `category: 'limit'` es el valor tradicional de referencia y
-   * no se suma: los yaku de límite valen 8000 puntos, no `han` × 100.
+   * Han del yaku en mano cerrada. Para `category: 'limit'` es el valor tradicional de referencia y
+   * no se suma nunca: los yaku de límite valen 8000 puntos, no `han` × 100.
    */
   readonly han: number
+  /**
+   * Han del yaku en mano abierta (kui-sagari). `undefined` significa que el yaku no se puede
+   * hacer en mano abierta (equivalente a `requiresClosedHand: true`). Si está definido, se usa
+   * este valor cuando `context.isClosedHand === false` en lugar de `han`.
+   */
+  readonly openHan: number | undefined
   /**
    * `true` cuando el yaku depende de la estructura de la mano y no se reconoce abierta. Se
    * **deriva** de `conditions` y no se declara aparte: los dos campos dicen lo mismo, y mantenerlos
@@ -123,9 +132,20 @@ const YAKUMAN_REFERENCE_HAN = 13
 function normal(
   id: NormalYakuId,
   han: number,
-  options: { readonly statKey?: YakuStatKey; readonly conditions?: readonly YakuCondition[] } = {},
+  options: {
+    readonly statKey?: YakuStatKey
+    readonly conditions?: readonly YakuCondition[]
+    readonly openHan?: number
+  } = {},
 ): YakuDefinition {
-  return definitionOf(id, 'normal', han, options.statKey ?? null, options.conditions ?? [])
+  return definitionOf(
+    id,
+    'normal',
+    han,
+    options.statKey ?? null,
+    options.conditions ?? [],
+    options.openHan,
+  )
 }
 
 function limit(
@@ -142,11 +162,13 @@ function definitionOf(
   han: number,
   statKey: YakuStatKey | null,
   conditions: readonly YakuCondition[],
+  openHan?: number,
 ): YakuDefinition {
   return {
     id,
     category,
     han,
+    openHan,
     requiresClosedHand: conditions.some((condition) => condition.kind === 'closedHand'),
     statKey,
     conditions,
@@ -250,12 +272,18 @@ export const YAKU_CATALOG: readonly YakuDefinition[] = [
   normal('sankantsu', 2, { conditions: [CLOSED_HAND, HAS_KAN] }),
   normal('shousangen', 2, { conditions: [CLOSED_HAND] }),
   normal('honroutou', 2, { conditions: [CLOSED_HAND] }),
-  normal('junchan', 3, { conditions: [CLOSED_HAND] }),
+  normal('junchan', 3, { openHan: 2 }),
   normal('ryanpeikou', 3, { conditions: [CLOSED_HAND] }),
-  normal('honitsu', 3),
+  normal('honitsu', 3, { openHan: 2 }),
   // El mangan por nagashi solo se declara en un empate agotado, nunca en una mano ganada.
   normal('nagashiMangan', 5, { conditions: [RYUUKYOKU] }),
-  normal('chinitsu', 6, { conditions: [CLOSED_HAND] }),
+  normal('chinitsu', 6, { openHan: 5 }),
+  // Chanta (混全帯幺九) - 2 han cerrada, 1 han abierta
+  normal('chanta', 2, { openHan: 1 }),
+  // Ittsu (一気通貫) - 2 han cerrada, 1 han abierta
+  normal('ittsu', 2, { openHan: 1 }),
+  // Sanshoku Doujun (三色同順) - 2 han cerrada, 1 han abierta
+  normal('sanshokuDoujun', 2, { openHan: 1 }),
   ...WIND_YAKU_IDS.map((id) => normal(id, 1)),
   ...LIMIT_YAKU,
 ]
@@ -371,7 +399,11 @@ function sumEntryOf(id: YakuId, context: YakuContext): YakuSumEntry {
     return { id, han: definition.han, reason: 'conditionsNotMet', unmet }
   }
 
-  return { id, han: definition.han, reason: 'counted', unmet: [] }
+  // Si la mano no está cerrada y el yaku tiene openHan definido, usar ese valor (kui-sagari)
+  const effectiveHan =
+    !context.isClosedHand && definition.openHan !== undefined ? definition.openHan : definition.han
+
+  return { id, han: effectiveHan, reason: 'counted', unmet: [] }
 }
 
 /**

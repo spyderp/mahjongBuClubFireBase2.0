@@ -38,7 +38,7 @@ function handleKeydown(event: KeyboardEvent): void {
         @keydown="closeOnEscape ? handleKeydown($event) : undefined"
       >
         <header class="mb-3 flex items-center justify-between gap-2">
-          <h2 class="text-base font-semibold">
+          <h2 class="font-display text-base font-semibold">
             {{ title }}
           </h2>
           <BaseButton variant="ghost" aria-label="Cerrar" @click="emit('close')"> × </BaseButton>

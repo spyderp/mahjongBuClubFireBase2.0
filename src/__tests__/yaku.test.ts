@@ -21,6 +21,8 @@ import {
   yakuCountsIn,
 } from '@/domain/yaku'
 import type { ResultType, Seat } from '@/domain/types'
+import { handContextOf, hasHandContext, sumHandYakuHan } from '@/domain/handValue'
+import type { HandSituation, HandValueInput } from '@/domain/handValue'
 import type {
   YakuCondition,
   YakuContext,
@@ -784,8 +786,14 @@ describe('T19 · yaku situacionales', () => {
       for (const where of ALL_CONTEXTS) {
         const counts = oracle(definition, where)
         const entry = entryOf(definition.id, where)
+        // Si la mano no está cerrada y el yaku tiene openHan, usar ese valor
+        const expectedHan = counts
+          ? where.isClosedHand
+            ? definition.han
+            : (definition.openHan ?? definition.han)
+          : 0
 
-        expect(sumYakuHan([definition.id], where).han).toBe(counts ? definition.han : 0)
+        expect(sumYakuHan([definition.id], where).han).toBe(expectedHan)
         expect(entry.reason).toBe(counts ? 'counted' : 'conditionsNotMet')
         expect(entry.unmet.length > 0).toBe(!counts)
       }
@@ -861,5 +869,106 @@ describe('T19 · yaku situacionales', () => {
       ok: false,
       reason: 'noYaku',
     })
+  })
+})
+
+/**
+ * T01 · RF-31.3, RF-31.4 y RF-31.5. El contexto de la mano —abierta o cerrada, con kan o sin él—
+ * decide qué yaku cuentan, y las cuatro combinaciones se barren sobre cuatro yaku: uno sin
+ * condición, uno que exige mano cerrada, uno que exige kan y uno que exige la **ausencia** de kan.
+ *
+ * El cuarto es el caso que obliga a tratar el kan en los dos sentidos: `ippatsu` no cuenta con kan,
+ * así que marcar kan **quita** un yaku en lugar de añadirlo.
+ */
+describe('T01 · el contexto de mano en el cálculo', () => {
+  /** La situación de la partida: lo que no depende de la mano (RF-31.5). */
+  const SITUATION: HandSituation = {
+    resultType: 'ron',
+    hasRiichiDeclared: true,
+    isFirstHand: false,
+    isFinalHand: false,
+  }
+
+  /** Las cuatro combinaciones de mano abierta/cerrada y con/sin kan. */
+  const COMBINATIONS = [
+    { isClosedHand: true, hasKan: false },
+    { isClosedHand: true, hasKan: true },
+    { isClosedHand: false, hasKan: false },
+    { isClosedHand: false, hasKan: true },
+  ] as const
+
+  function handOf(
+    yaku: readonly YakuId[],
+    combination: { readonly isClosedHand: boolean; readonly hasKan: boolean },
+  ): HandValueInput {
+    return { yaku, yakuHan: 0, doraCount: 0, fu: 30, ...combination }
+  }
+
+  it('un yaku sin condición cuenta en las cuatro combinaciones', () => {
+    for (const combination of COMBINATIONS) {
+      const sum = sumHandYakuHan(handOf(['tanyao'], combination), SITUATION)
+
+      expect(sum.han).toBe(1)
+      expect(sum.counted).toStrictEqual(['tanyao'])
+    }
+  })
+
+  it('un yaku que exige mano cerrada no cuenta con la mano abierta', () => {
+    const closed = sumHandYakuHan(handOf(['pinfu'], COMBINATIONS[0]), SITUATION)
+    const open = sumHandYakuHan(handOf(['pinfu'], COMBINATIONS[2]), SITUATION)
+
+    expect(closed.han).toBe(1)
+    expect(open.han).toBe(0)
+    expect(open.excluded).toStrictEqual([
+      { id: 'pinfu', han: 1, reason: 'conditionsNotMet', unmet: [{ kind: 'closedHand' }] },
+    ])
+  })
+
+  it('un yaku que exige kan no cuenta sin kan', () => {
+    const withKan = sumHandYakuHan(handOf(['rinshanKaihou'], COMBINATIONS[1]), SITUATION)
+    const withoutKan = sumHandYakuHan(handOf(['rinshanKaihou'], COMBINATIONS[0]), SITUATION)
+
+    expect(withKan.han).toBe(1)
+    expect(withoutKan.han).toBe(0)
+    expect(withoutKan.excluded).toStrictEqual([
+      {
+        id: 'rinshanKaihou',
+        han: 1,
+        reason: 'conditionsNotMet',
+        unmet: [{ kind: 'hasKan' }],
+      },
+    ])
+  })
+
+  it('un yaku que exige la ausencia de kan no cuenta con kan: el kan también quita', () => {
+    const withoutKan = sumHandYakuHan(handOf(['ippatsu'], COMBINATIONS[0]), SITUATION)
+    const withKan = sumHandYakuHan(handOf(['ippatsu'], COMBINATIONS[1]), SITUATION)
+
+    expect(withoutKan.han).toBe(1)
+    expect(withKan.han).toBe(0)
+    expect(withKan.excluded).toStrictEqual([
+      { id: 'ippatsu', han: 1, reason: 'conditionsNotMet', unmet: [{ kind: 'noKan' }] },
+    ])
+  })
+
+  it('el contexto sale de la mano capturada y no de constantes', () => {
+    const captured = handContextOf(handOf(['tanyao'], COMBINATIONS[3]), SITUATION)
+
+    expect(captured).toStrictEqual({
+      resultType: 'ron',
+      isClosedHand: false,
+      hasRiichiDeclared: true,
+      hasKan: true,
+      isFirstHand: false,
+      isFinalHand: false,
+    })
+  })
+
+  it('una mano sin contexto se supone cerrada y sin kan, como antes de 004', () => {
+    const legacy = handContextOf({ yaku: ['tanyao'], yakuHan: 1, doraCount: 0, fu: 30 }, SITUATION)
+
+    expect(legacy.isClosedHand).toBe(true)
+    expect(legacy.hasKan).toBe(false)
+    expect(hasHandContext({ yaku: [], yakuHan: 0, doraCount: 0, fu: 30 })).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import type { ResultType } from './types'
-import { FU_CHIITOITSU, FU_PINFU, isLimitYaku } from './yaku'
-import type { YakuId } from './yaku'
+import { FU_CHIITOITSU, FU_PINFU, isLimitYaku, sumYakuHan } from './yaku'
+import type { YakuContext, YakuHanSum, YakuId } from './yaku'
 
 /** Tramo en que cae la mano antes de aplicar la fórmula (RF-16.3, `docs/domain.md` §4.2). */
 export type LimitBand = 'yakuman' | 'sanbaiman' | 'baiman' | 'haneman' | 'mangan' | 'formula'
@@ -12,6 +12,36 @@ export type HandValueInput = {
   readonly yakuHan: number
   readonly doraCount: number
   readonly fu: number
+  /**
+   * RF-31.1: si la mano es **cerrada**. `undefined` es un turno escrito antes de `specs/004`: se
+   * supone cerrada, que es lo que el motor asumía en silencio hasta que la captura dijo otra cosa.
+   */
+  readonly isClosedHand?: boolean
+  /**
+   * RF-31.2: si la mano tuvo **kan**. `undefined` es un turno escrito antes de `specs/004`: se
+   * supone sin kan, igual que antes.
+   */
+  readonly hasKan?: boolean
+  /**
+   * RF-32.1 y RF-32.3: el ajuste a mano de los han, como **delta** sobre la suma del catálogo de
+   * este ganador (RF-22.9). Vive aparte del total a propósito, y no se convierte en un total
+   * absoluto al pasar a ser por ganador.
+   */
+  readonly yakuHanOverride?: number
+}
+
+/**
+ * Lo que el turno sabe de la mano y que **no** depende del ganador (RF-31.5).
+ *
+ * Lo que sí depende del ganador —si la mano está abierta y si tuvo kan— viaja dentro de la propia
+ * mano, porque es de la mano. Lo que está aquí es de la **partida**: el resultado del turno, si
+ * alguien declaró riichi, y si la mano es la primera o la última.
+ */
+export type HandSituation = {
+  readonly resultType: ResultType
+  readonly hasRiichiDeclared: boolean
+  readonly isFirstHand: boolean
+  readonly isFinalHand: boolean
 }
 
 export type HandValue = {
@@ -79,6 +109,65 @@ export function computeHandValue(input: HandValueInput): HandValue {
   )
 
   return { han, fu: input.fu, basicPoints: basicPointsOf(band, han, input.fu), band }
+}
+
+/**
+ * RF-31.5: el contexto que decide qué yaku cuentan sale de **lo capturado en el turno**, no de
+ * constantes del formulario.
+ *
+ * Una mano sin contexto —un turno escrito antes de `specs/004`— se supone cerrada y sin kan,
+ * que es exactamente lo que el motor asumía antes de que existiera la captura. Por eso los dos
+ * campos son opcionales y no obligatorios: hacerlos obligatorios obligaría a migrar y re-puntuar
+ * las partidas ya escritas (RF-37.3).
+ */
+export function handContextOf(hand: HandValueInput, situation: HandSituation): YakuContext {
+  return {
+    resultType: situation.resultType,
+    isClosedHand: hand.isClosedHand ?? true,
+    hasRiichiDeclared: situation.hasRiichiDeclared,
+    hasKan: hand.hasKan ?? false,
+    isFirstHand: situation.isFirstHand,
+    isFinalHand: situation.isFinalHand,
+  }
+}
+
+/**
+ * RF-31.3 y RF-31.4: la suma de han de yaku de una mano **con su contexto**, con el kan aplicado
+ * en los dos sentidos: `ippatsu` exige la ausencia de kan, así que marcar kan **quita** yaku.
+ *
+ * El desglose sale del catálogo de `domain/yaku.ts` y no se reimplementa aquí: quien lo pinte lo
+ * lee de `YakuHanSum.breakdown`, que ya dice qué yaku no contó y por qué (RF-22.3).
+ */
+export function sumHandYakuHan(hand: HandValueInput, situation: HandSituation): YakuHanSum {
+  return sumYakuHan(hand.yaku, handContextOf(hand, situation))
+}
+
+/**
+ * Si la mano trae el contexto que se capturó (RF-37.3).
+ *
+ * Un turno escrito antes de `specs/004` no lo trae, y esa es la única manera de distinguirlo de
+ * uno nuevo: los campos nuevos son opcionales y no se migran los turnos antiguos.
+ */
+export function hasHandContext(hand: HandValueInput): boolean {
+  return hand.isClosedHand !== undefined || hand.hasKan !== undefined
+}
+
+/**
+ * El han de yaku que cuenta en el cálculo (RF-31.6).
+ *
+ * Una mano **con contexto** se vuelve a sumar con el contexto que se capturó: por eso corregir el
+ * contexto de un ganador recalcula su desglose y el `yakuHan` guardado queda igual al que produce
+ * el recálculo. El ajuste a mano sigue siendo un delta encima de esa suma (RF-22.9).
+ *
+ * Una mano **sin contexto** —un turno anterior a 004— usa el `yakuHan` que ya tenía guardado: los
+ * turnos antiguos no se re-puntúan (RF-37.3) y `rulesetVersion` no cambia por ellos (RF-37.4).
+ */
+export function effectiveYakuHan(hand: HandValueInput, situation: HandSituation): number {
+  if (!hasHandContext(hand)) {
+    return hand.yakuHan
+  }
+
+  return sumHandYakuHan(hand, situation).han + (hand.yakuHanOverride ?? 0)
 }
 
 function limitBandOf(han: number, fu: number, hasLimitYaku: boolean): LimitBand {

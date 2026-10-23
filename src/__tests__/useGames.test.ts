@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useGameDetail, useGames } from '@/composables/useGames'
+import { rewriteSeasonDocs, useGameDetail, useGames } from '@/composables/useGames'
 import { usePlayerSeasonStats } from '@/composables/usePlayerSeasonStats'
 import { useRankings } from '@/composables/useRankings'
+import { createBatch } from '@/data/batch'
 import { DataError } from '@/data/errors'
 import { gamesRepository } from '@/data/games.repository'
 import type { CreateGameInput, GameParticipant } from '@/data/games.repository'
+import { playerSeasonStatsRepository } from '@/data/playerSeasonStats.repository'
 import { playersRepository } from '@/data/players.repository'
 import { seasonsRepository } from '@/data/seasons.repository'
 import { turnsRepository } from '@/data/turns.repository'
 import type { CreateTurnInput } from '@/data/turns.repository'
 import type { PlayerDelta, TurnValue } from '@/domain/turn'
 import { type Seat, toGameId, toPlayerId, toSeasonId } from '@/domain/types'
-import type { GameId, PlayerId, SeasonId } from '@/domain/types'
+import type { GameId, PlayerId, Position, SeasonId } from '@/domain/types'
 import { fakeAdvanceSeconds, fakeNow, fakeReset } from '@/test-utils/fakeFirestore'
 import { withColada } from '@/test-utils/colada'
 
@@ -541,5 +543,101 @@ describe('T31 · finalsOf con turnos re-derivados', () => {
     } finally {
       unmount()
     }
+  })
+})
+
+/**
+ * T08 · RF-32.1. En un ron múltiple cada ganador tiene **su** desglose. Los contadores de la
+ * temporada leen las manos ganadoras: si todos usaran los yaku del primer ganador, el riichi del
+ * segundo se contaría como si fuera del primero.
+ */
+describe('T08 · las manos ganadoras usan el desglose de cada ganador', () => {
+  beforeEach(() => {
+    fakeReset()
+  })
+
+  it('cada jugador cuenta con los yaku y las dora de su propia mano', async () => {
+    const seasonId = await seedSeason()
+    const game = await openGame({ seasonId })
+    const first = PLAYERS[0]?.playerId ?? toPlayerId('p1')
+    const second = PLAYERS[1]?.playerId ?? toPlayerId('p2')
+    const deltas: readonly PlayerDelta[] = PLAYERS.map((player) => ({
+      playerId: player.playerId,
+      delta: 0,
+    }))
+
+    await turnsRepository.create(game.id, {
+      turnNo: 1,
+      wind: 'east',
+      dealerId: first,
+      honba: 0,
+      resultType: 'ron',
+      yaku: ['riichi'],
+      yakuHan: 1,
+      doraCount: 2,
+      fu: 30,
+      tenpai: [first, second],
+      riichiDeclaredBy: [first],
+      riichiSticks: 1,
+      value: [
+        { playerId: first, han: 1, fu: 30, basicPoints: 2000, points: 2000, deltas },
+        { playerId: second, han: 1, fu: 20, basicPoints: 1000, points: 1000, deltas },
+      ],
+      deltas,
+      capturedBy: 'user-1',
+      isRenchan: false,
+      isFinalTurn: false,
+      discarderId: null,
+      chomboId: null,
+      yakuHanOverride: 0,
+      handContext: [
+        { playerId: first, isClosedHand: true, hasKan: false },
+        { playerId: second, isClosedHand: true, hasKan: false },
+      ],
+      winnerHands: [
+        {
+          playerId: first,
+          yaku: ['riichi'],
+          yakuHan: 1,
+          yakuHanOverride: 0,
+          doraCount: 2,
+          fu: 30,
+        },
+        {
+          playerId: second,
+          yaku: ['pinfu'],
+          yakuHan: 1,
+          yakuHanOverride: 0,
+          doraCount: 0,
+          fu: 20,
+        },
+      ],
+    })
+
+    const turns = await turnsRepository.list(game.id)
+    const results = PLAYERS.map((player, index) => ({
+      playerId: player.playerId,
+      playerName: `Jugador ${index + 1}`,
+      seat: player.seat,
+      finalScore: 25000,
+      finalPosition: `${index + 1}st` as Position,
+      uma: 0,
+      chombo: false,
+      bankrupt: false,
+    }))
+
+    const batch = createBatch()
+
+    await rewriteSeasonDocs(seasonId, game.id, 'finalized', results, turns, batch)
+    await batch.commit()
+
+    const stats = await playerSeasonStatsRepository.listBySeason(seasonId)
+    const winner = stats.find((entry) => entry.playerId === first)
+    const other = stats.find((entry) => entry.playerId === second)
+
+    expect(winner?.yakuStats.riichi).toBe(1)
+    expect(winner?.yakuStats.dora).toBe(2)
+    expect(other?.yakuStats.riichi).toBe(0)
+    expect(other?.yakuStats.dora).toBe(0)
   })
 })

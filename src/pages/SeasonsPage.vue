@@ -46,11 +46,13 @@ async function confirmClose(): Promise<void> {
 <template>
   <section>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-xl font-semibold">
+      <h1 class="font-display text-xl font-semibold">
         {{ t(creating ? 'seasonsView.newTitle' : 'seasonsView.title') }}
       </h1>
-      <RouterLink v-if="!creating" to="/temporadas/nueva" class="text-sm text-mahjong-accent">
-        {{ t('nav.newSeason') }}
+      <RouterLink v-if="!creating" to="/temporadas/nueva">
+        <BaseButton variant="warning">
+          {{ t('nav.newSeason') }}
+        </BaseButton>
       </RouterLink>
     </div>
 
@@ -94,7 +96,7 @@ async function confirmClose(): Promise<void> {
               :class="[
                 'rounded-full px-3 py-1 text-sm',
                 season.status === 'open'
-                  ? 'bg-mahjong-accent/10 text-mahjong-accent'
+                  ? 'bg-mahjong-positive/10 text-mahjong-positive'
                   : 'bg-mahjong-border/40 text-mahjong-muted',
               ]"
             >
@@ -103,6 +105,7 @@ async function confirmClose(): Promise<void> {
             <BaseButton
               v-if="season.status === 'open'"
               variant="danger"
+              size="sm"
               @click="closeTarget = { id: season.id, title: season.title }"
             >
               {{ t('seasonsView.close') }}

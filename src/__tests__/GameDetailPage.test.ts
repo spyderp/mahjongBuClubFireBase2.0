@@ -8,6 +8,8 @@ import { gamesRepository } from '@/data/games.repository'
 import type { GameRecord } from '@/data/games.repository'
 import { playersRepository } from '@/data/players.repository'
 import type { PlayerRecord } from '@/data/players.repository'
+import { playerSeasonStatsRepository } from '@/data/playerSeasonStats.repository'
+import { seasonsRepository } from '@/data/seasons.repository'
 import { turnsRepository } from '@/data/turns.repository'
 import { toPlayerId } from '@/domain/types'
 import type { PlayerId, Seat } from '@/domain/types'
@@ -409,7 +411,7 @@ describe('T39 · el detalle muestra el estado derivado', () => {
 
     const { wrapper } = mountPage(game.id)
 
-    await vi.waitFor(() => expect(wrapper.findAll('li').length).toBeGreaterThan(0))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="turn-timeline"]').exists()).toBe(true))
 
     expect(wrapper.find('select[name="dealerId"]').exists()).toBe(false)
     expect(wrapper.find('select[name="wind"]').exists()).toBe(false)
@@ -442,7 +444,7 @@ describe('T39 · quién corrigió cada turno (RF-19.10)', () => {
 
     await vi.waitFor(() => expect(wrapper.text()).toContain('cap-1'))
     expect(wrapper.findAll('[data-test="turn-audit"]')).toHaveLength(0)
-    expect(wrapper.find('li').text()).toContain('cap-1')
+    expect(wrapper.find('[data-test="turn-timeline"]').text()).toContain('cap-1')
   })
 
   it('un turno corregido muestra quién, cuándo y qué cambió', async () => {
@@ -525,5 +527,208 @@ describe('T39 · quién corrigió cada turno (RF-19.10)', () => {
 
     expect(audit.text()).toContain('cap-2')
     expect(audit.text()).toContain('1')
+  })
+})
+
+/**
+ * RF-33.1 a RF-33.7. La capacidad de borrar ya existe (`useGameTurns.ts`); lo que faltaba era la
+ * pantalla: ofrecer el borrado **solo** del último turno, pedir confirmación, levantar la marca de
+ * bancarrota cuando tocaría y explicar el desajuste.
+ */
+describe('borrar el último turno', () => {
+  beforeEach(() => {
+    fakeReset()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    mounted?.unmount()
+    mounted = undefined
+  })
+
+  /** Un turno de empate con el reparto de puntos que se le pida. */
+  async function addTurn(
+    game: GameRecord,
+    turnNo: number,
+    deltas: readonly number[],
+  ): Promise<void> {
+    const dealerId = game.players[0]?.playerId
+
+    if (dealerId === undefined) {
+      throw new Error('faltan jugadores')
+    }
+
+    await turnsRepository.create(game.id, {
+      turnNo,
+      wind: 'east',
+      dealerId,
+      honba: 0,
+      resultType: 'ryuukyoku',
+      yaku: [],
+      yakuHan: 0,
+      doraCount: 0,
+      fu: 20,
+      tenpai: [],
+      riichiDeclaredBy: [],
+      riichiSticks: 0,
+      value: [],
+      deltas: game.players.map((player, index) => ({
+        playerId: player.playerId,
+        delta: deltas[index] ?? 0,
+      })),
+      capturedBy: 'cap-1',
+      isRenchan: false,
+      isFinalTurn: false,
+      discarderId: null,
+      chomboId: null,
+      yakuHanOverride: 0,
+    })
+  }
+
+  async function gameWithTurns(
+    turns: readonly (readonly number[])[],
+  ): Promise<{ game: GameRecord; p1: PlayerId }> {
+    const players = await createPlayers()
+    const game = await createGame(players)
+    const p1 = players[0]?.id as PlayerId
+
+    for (const [index, deltas] of turns.entries()) {
+      await addTurn(game, index + 1, deltas)
+    }
+
+    return { game, p1 }
+  }
+
+  /** Pulsa el botón de confirmación del diálogo de borrado, que vive en el cuerpo. */
+  async function confirmDelete(): Promise<void> {
+    const button = document.body.querySelector('[data-test="delete-turn-confirm"]')
+
+    if (button === null) {
+      throw new Error('Botón de confirmar el borrado no encontrado')
+    }
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await Promise.resolve()
+  }
+
+  it('ofrece borrar solo el último turno y pide confirmación antes de hacerlo', async () => {
+    const { game } = await gameWithTurns([
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ])
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="delete-turn-2"]').exists()).toBe(true))
+
+    // Un turno que no es el último no se puede borrar desde aquí (RF-33.3).
+    expect(wrapper.find('[data-test="delete-turn-1"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="delete-turn-2"]').trigger('click')
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain('turno 2')
+    // Hasta que se confirma, no se borra nada (RF-33.1).
+    expect((await turnsRepository.list(game.id)).map((turn) => turn.turnNo)).toStrictEqual([1, 2])
+  })
+
+  it('el borrado usa la capacidad que ya existe y deja el turno fuera (RF-33.2)', async () => {
+    const { game } = await gameWithTurns([
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ])
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="delete-turn-2"]').exists()).toBe(true))
+    await wrapper.find('[data-test="delete-turn-2"]').trigger('click')
+    await confirmDelete()
+
+    await vi.waitFor(async () =>
+      expect((await turnsRepository.list(game.id)).map((turn) => turn.turnNo)).toStrictEqual([1]),
+    )
+    await vi.waitFor(() => expect(wrapper.find('[data-test="delete-turn-2"]').exists()).toBe(false))
+  })
+
+  it('borrar el turno que dejaba la partida en bancarrota levanta la marca (RF-33.4)', async () => {
+    const { game } = await gameWithTurns([
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ])
+    await gamesRepository.update(game.id, { mustFinalize: true })
+
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="delete-turn-2"]').exists()).toBe(true))
+    expect(wrapper.text()).toContain('Bancarrota')
+
+    await wrapper.find('[data-test="delete-turn-2"]').trigger('click')
+    await confirmDelete()
+
+    await vi.waitFor(async () =>
+      expect((await gamesRepository.getById(game.id))?.mustFinalize).toBe(false),
+    )
+    // La pantalla refleja la marca levantada (RF-33.4).
+    await vi.waitFor(() => expect(wrapper.text()).not.toContain('Bancarrota'))
+  })
+
+  it('un recuento desfasado se rechaza y la pantalla lo explica (RF-33.6)', async () => {
+    const { game } = await gameWithTurns([[0, 0, 0, 0]])
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() => expect(wrapper.find('[data-test="delete-turn-1"]').exists()).toBe(true))
+
+    // Otro sitio captura un turno mientras esta pantalla sigue abierta.
+    await addTurn(game, 2, [0, 0, 0, 0])
+
+    await wrapper.find('[data-test="delete-turn-1"]').trigger('click')
+    await confirmDelete()
+
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="delete-turn-error"]')).not.toBeNull(),
+    )
+    expect(document.body.querySelector('[data-test="delete-turn-error"]')?.textContent).toContain(
+      'cambió en otro sitio',
+    )
+    // No se borra nada: el estado local estaba desfasado (RF-33.6).
+    expect((await turnsRepository.list(game.id)).map((turn) => turn.turnNo)).toStrictEqual([1, 2])
+  })
+
+  it('tras borrar, la partida queda lista para capturar ese mismo número (RF-33.5, RF-33.7)', async () => {
+    const { game, p1 } = await gameWithTurns([
+      [1000, -1000, 0, 0],
+      [2000, -2000, 0, 0],
+    ])
+    const season = await seasonsRepository.create({
+      title: 'Temporada',
+      dateFrom: { seconds: 1714521600, nanoseconds: 0 },
+      dateTo: { seconds: 1714608000, nanoseconds: 0 },
+    })
+    await gamesRepository.update(game.id, { seasonId: season.id })
+
+    const { wrapper, pinia } = mountPage(game.id)
+    authenticate(pinia)
+
+    await vi.waitFor(() =>
+      expect(wrapper.find(`[data-test="standing-${p1}"]`).text()).toContain('28000'),
+    )
+
+    await wrapper.find('[data-test="delete-turn-2"]').trigger('click')
+    await confirmDelete()
+
+    await vi.waitFor(() =>
+      expect(wrapper.find(`[data-test="standing-${p1}"]`).text()).toContain('26000'),
+    )
+    // El número del turno borrado queda libre: la numeración no tiene huecos (RF-33.5).
+    expect(await turnsRepository.nextNumber(game.id)).toBe(2)
+    // Y la captura sigue disponible (RF-33.5).
+    expect(wrapper.find('button[type="submit"]').exists()).toBe(true)
+    // Los agregados de temporada no cuentan el turno borrado (RF-33.7): una partida abierta no
+    // entra en ellos, así que su turno borrado tampoco puede contarse.
+    expect(await playerSeasonStatsRepository.listBySeason(season.id)).toHaveLength(0)
   })
 })

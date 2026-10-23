@@ -124,7 +124,7 @@ function handleCancel(): void {
 
 <template>
   <form class="flex flex-col gap-3" @submit.prevent="handleSubmit">
-    <h2 class="text-lg font-semibold">
+    <h2 class="font-display text-lg font-semibold">
       {{ title }}
     </h2>
 

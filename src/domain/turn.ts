@@ -1,5 +1,5 @@
-import { computeHandValue, ronPayment, tsumoPayment } from './handValue'
-import type { HandValue, HandValueInput } from './handValue'
+import { computeHandValue, effectiveYakuHan, ronPayment, tsumoPayment } from './handValue'
+import type { HandSituation, HandValue, HandValueInput } from './handValue'
 import type { PlayerId, Seat } from './types'
 
 const SEAT_ORDER: Record<Seat, number> = { east: 0, south: 1, west: 2, north: 3 }
@@ -40,6 +40,14 @@ export type TurnBase = {
   readonly honba: number
   readonly riichiDeclaredBy: readonly PlayerId[]
   readonly riichiSticksBefore: number
+  /**
+   * RF-31.5: si esta es la **primera** mano de la partida. Lo necesitan los yaku que solo cuentan
+   * en la primera mano (`tenhou`, `chiihou`, `suuchaRiichi`).
+   *
+   * Es opcional porque no todas las manos necesitan saberlo: la que no lo dice no cuenta con esos
+   * yaku, que es lo mismo que se podía antes de que existiera el contexto capturado.
+   */
+  readonly isFirstHand?: boolean
 }
 
 export type TurnInput =
@@ -183,27 +191,52 @@ function winsOf(input: TurnInput, players: readonly TurnPlayer[], honba: number)
     return []
   }
 
+  const situation = situationOf(input)
   const wins: Win[] = []
 
   for (const player of players) {
     const winner = input.winners.find((candidate) => candidate.playerId === player.playerId)
 
     if (winner !== undefined) {
-      wins.push(toWin(player, winner.hand, honba, input.resultType, input.dealerId))
+      wins.push(toWin(player, winner.hand, honba, input.resultType, input.dealerId, situation))
     }
   }
 
   return wins
 }
 
+/**
+ * Lo que el turno sabe de la mano y que no depende del ganador (RF-31.5).
+ *
+ * El riichi declarado es de la **partida**, no de la mano: la captura lo declara una vez y los
+ * yaku que lo exigen miran ese mismo hecho. La última mano de la partida no se marca todavía —
+ * `haiteiRaoyui` y `houteiRaoyui` no se capturan—, así que aquí tampoco se da por buena.
+ */
+function situationOf(input: TurnInput): HandSituation {
+  return {
+    resultType: input.resultType,
+    hasRiichiDeclared: input.riichiDeclaredBy.length > 0,
+    isFirstHand: input.isFirstHand ?? false,
+    isFinalHand: false,
+  }
+}
+
 function toWin(
   player: TurnPlayer,
   handInput: HandValueInput,
   honba: number,
-  resultType: 'tsumo' | 'ron',
+  resultType: 'ron' | 'tsumo',
   dealerId: PlayerId,
+  situation: HandSituation,
 ): Win {
-  const hand = computeHandValue(handInput)
+  /**
+   * RF-31.6: el han de yaku sale del contexto que se capturó para **esta** mano. Una mano sin
+   * contexto —un turno anterior a 004— conserva el `yakuHan` que ya tenía guardado (RF-37.3).
+   */
+  const hand = computeHandValue({
+    ...handInput,
+    yakuHan: effectiveYakuHan(handInput, situation),
+  })
   const winnerIsDealer = player.playerId === dealerId
   const base = { playerId: player.playerId, seat: player.seat, hand }
 

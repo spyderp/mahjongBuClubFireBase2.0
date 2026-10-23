@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '@/stores/session'
+import { RouterLink } from 'vue-router'
+import BaseButton from '@/components/ui/BaseButton.vue'
 
 const session = useSessionStore()
 const { t } = useI18n()
@@ -14,30 +16,36 @@ const links: readonly { to: string; label: string }[] = [
   { to: '/estadisticas', label: t('nav.stats') },
   { to: '/ranking', label: t('nav.rankings') },
 ]
-
-/** RF-14.4: las acciones de captura solo existen con sesión autenticada. */
-const captureLinks: readonly { to: string; label: string }[] = [
-  { to: '/partidas/nueva', label: t('nav.newGame') },
-  { to: '/jugadores/nuevo', label: t('nav.newPlayer') },
-  { to: '/temporadas/nueva', label: t('nav.newSeason') },
-]
 </script>
 
 <template>
   <nav class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-    <RouterLink v-for="link in links" :key="link.to" :to="link.to">
+    <RouterLink
+      v-for="link in links"
+      :key="link.to"
+      :to="link.to"
+      class="text-mahjong-muted hover:text-mahjong-text"
+    >
       {{ link.label }}
     </RouterLink>
 
     <template v-if="session.status === 'authenticated'">
       <span aria-hidden="true" class="text-mahjong-border">·</span>
-      <RouterLink
-        v-for="capture in captureLinks"
-        :key="capture.to"
-        :to="capture.to"
-        class="text-mahjong-accent"
-      >
-        {{ capture.label }}
+
+      <RouterLink to="/partidas/nueva">
+        <BaseButton variant="success" size="sm">
+          {{ t('nav.newGame') }}
+        </BaseButton>
+      </RouterLink>
+      <RouterLink to="/jugadores/nuevo">
+        <BaseButton variant="info" size="sm">
+          {{ t('nav.newPlayer') }}
+        </BaseButton>
+      </RouterLink>
+      <RouterLink to="/temporadas/nueva">
+        <BaseButton variant="warning" size="sm">
+          {{ t('nav.newSeason') }}
+        </BaseButton>
       </RouterLink>
     </template>
   </nav>

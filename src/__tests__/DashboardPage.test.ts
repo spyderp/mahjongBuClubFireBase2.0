@@ -102,7 +102,8 @@ describe('T85 · DashboardPage', () => {
 
     await vi.waitFor(() => expect(wrapper.find('.grid.grid-cols-1').exists()).toBe(true))
     const grid = wrapper.find('.grid.grid-cols-1')
-    expect(grid.classes()).toContain('md:grid-cols-3')
+    expect(grid.classes()).toContain('md:grid-cols-2')
+    expect(grid.classes()).toContain('lg:grid-cols-3')
     expect(grid.classes()).not.toContain('min-w-full')
 
     for (const width of [360, 1280]) {

@@ -7,11 +7,13 @@ import BaseSelect from '@/components/ui/BaseSelect.vue'
 import type { SelectOption } from '@/components/ui/BaseSelect.vue'
 import BaseTable from '@/components/ui/BaseTable.vue'
 import type { CellValue, TableColumn } from '@/components/ui/BaseTable.vue'
+import BaseButton from '@/components/ui/BaseButton.vue'
 import { useGames } from '@/composables/useGames'
 import { usePlayers } from '@/composables/usePlayers'
 import { useSeasons } from '@/composables/useSeasons'
 import { toPlayerId, toSeasonId } from '@/domain/types'
 import type { GameRecord } from '@/data/games.repository'
+import { RouterLink } from 'vue-router'
 
 defineProps<{ creating?: boolean }>()
 
@@ -97,11 +99,13 @@ function handleCancel(): void {
 <template>
   <section>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-xl font-semibold">
+      <h1 class="font-display text-xl font-semibold">
         {{ t(creating ? 'gamesView.newTitle' : 'gamesView.title') }}
       </h1>
-      <RouterLink v-if="!creating" to="/partidas/nueva" class="text-sm text-mahjong-accent">
-        {{ t('nav.newGame') }}
+      <RouterLink v-if="!creating" to="/partidas/nueva">
+        <BaseButton variant="success">
+          {{ t('nav.newGame') }}
+        </BaseButton>
       </RouterLink>
     </div>
 

@@ -833,3 +833,79 @@ describe('T06 · dealer real', () => {
     ])
   })
 })
+
+/**
+ * T02 · RF-31.1, RF-31.2 y RF-31.7. El contexto de la mano —abierta o cerrada, con kan o sin él—
+ * viaja con cada ganador y lo propaga al cálculo: una mano marcada abierta deja de contar los yaku
+ * que exigen mano cerrada, y una marcada con kan deja de contar `ippatsu`.
+ *
+ * Los valores por defecto —cerrada y sin kan— reproducen lo que el motor hacía antes de 004, y una
+ * mano **sin** contexto —un turno escrito antes de 004— conserva el `yakuHan` que ya traía
+ * guardado: los turnos antiguos no se re-puntúan (RF-37.3).
+ */
+describe('T02 · el contexto de mano en el turno', () => {
+  const CERRADA: HandValueInput = {
+    yaku: ['pinfu'],
+    yakuHan: 1,
+    doraCount: 0,
+    fu: 30,
+    isClosedHand: true,
+    hasKan: false,
+  }
+
+  it('una mano sin contexto conserva el han que ya traía guardado', () => {
+    const resolution = resolve(tsumoInput([win(B, HAND_1)]))
+
+    expect(resolution.values[0]?.han).toBe(1)
+  })
+
+  it('los valores por defecto (cerrada y sin kan) reproducen el comportamiento anterior a 004', () => {
+    const sinContexto = resolve(tsumoInput([win(B, HAND_1)]))
+    const conContexto = resolve(
+      tsumoInput([win(B, { ...HAND_1, isClosedHand: true, hasKan: false })]),
+    )
+
+    expect(conContexto.values).toStrictEqual(sinContexto.values)
+    expect(conContexto.deltas).toStrictEqual(sinContexto.deltas)
+  })
+
+  it('una mano abierta deja de contar los yaku que exigen mano cerrada', () => {
+    const cerrada = resolve(tsumoInput([win(B, CERRADA)]))
+    const abierta = resolve(tsumoInput([win(B, { ...CERRADA, isClosedHand: false })]))
+
+    expect(cerrada.values[0]?.han).toBe(1)
+    expect(abierta.values[0]?.han).toBe(0)
+  })
+
+  it('el kan quita `ippatsu` igual que lo cierra a los yaku que lo exigen', () => {
+    const ippatsu: HandValueInput = {
+      yaku: ['ippatsu'],
+      yakuHan: 1,
+      doraCount: 0,
+      fu: 30,
+      isClosedHand: true,
+      hasKan: false,
+    }
+    const sinKan = resolve(tsumoInput([win(B, ippatsu)], { riichiDeclaredBy: [B] }))
+    const conKan = resolve(
+      tsumoInput([win(B, { ...ippatsu, hasKan: true })], { riichiDeclaredBy: [B] }),
+    )
+
+    expect(sinKan.values[0]?.han).toBe(1)
+    expect(conKan.values[0]?.han).toBe(0)
+  })
+
+  it('cada ganador lleva su propio contexto en el mismo turno', () => {
+    const resolution = resolve(
+      ronInput(
+        [
+          win(B, { ...CERRADA, yakuHan: 1 }),
+          win(C, { ...CERRADA, isClosedHand: false, yakuHan: 1 }),
+        ],
+        D,
+      ),
+    )
+
+    expect(resolution.values.map((value) => value.han)).toStrictEqual([1, 0])
+  })
+})

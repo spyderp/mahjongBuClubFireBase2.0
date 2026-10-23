@@ -1445,6 +1445,9 @@ type Fila = {
   readonly delta: string
   readonly clasesDelta: readonly string[]
   readonly esLocalia: boolean
+  readonly esGanador: boolean
+  readonly esPerdedorRon: boolean
+  readonly tieneRiichi: boolean
 }
 
 function filaDe(wrapper: ReturnType<typeof mountTurnForm>['wrapper'], seat: Seat): Fila {
@@ -1458,13 +1461,16 @@ function filaDe(wrapper: ReturnType<typeof mountTurnForm>['wrapper'], seat: Seat
 
   return {
     texto: row.text(),
-    viento: row.find('[data-test="mesa-wind"]').text(),
+    viento: row.find('[data-test="mesa-wind-badge"]').text(),
     nombre: row.find('[data-test="mesa-name"]').text(),
-    asiento: row.find('[data-test="mesa-seat"]').text(),
+    asiento: row.find('[data-test="mesa-wind-badge"]').text(),
     marcador: row.find('[data-test="mesa-score"]').text(),
     delta: delta.text(),
-    clasesDelta: delta.classes(),
+    clasesDelta: delta.classes().filter((c) => c.startsWith('text-mahjong-')),
     esLocalia: row.find('[data-test="mesa-dealer"]').exists(),
+    esGanador: row.classes().includes('ring-mahjong-positive'),
+    esPerdedorRon: row.classes().includes('ring-mahjong-negative'),
+    tieneRiichi: row.find('[data-test="mesa-riichi"]').exists(),
   }
 }
 
@@ -1863,32 +1869,17 @@ describe('T10 · viento por asiento', () => {
     fakeReset()
   })
 
-  it('los cuatro asientos muestran el viento, y cambia al cruzar la vuelta del Este', async () => {
+  it('los cuatro asientos muestran el viento del asiento como etiqueta de color', async () => {
     const game = await createGame()
 
-    const antes = mountTurnForm(game)
-    await vi.waitFor(() => expect(filaDe(antes.wrapper, 'east').viento).toBe('Ronda Este'))
+    const { wrapper } = mountTurnForm(game)
+    await vi.waitFor(() => expect(filaDe(wrapper, 'east').viento).toBe('Este'))
 
-    expect(mesaDe(antes.wrapper).map((fila) => fila.viento)).toStrictEqual([
-      'Ronda Este',
-      'Ronda Este',
-      'Ronda Este',
-      'Ronda Este',
-    ])
-    antes.wrapper.unmount()
-
-    // La localía va perdiendo la mano una y otra vez: Este → Sur → Oeste → Norte → Este. Al volver al
-    // Este el viento de ronda gira con ella (`domain/rules.ts` · `nextHand`).
-    await partidaSinLocalia(game, 4)
-
-    const despues = mountTurnForm(game)
-    await vi.waitFor(() => expect(filaDe(despues.wrapper, 'east').viento).toBe('Ronda Sur'))
-
-    expect(mesaDe(despues.wrapper).map((fila) => fila.viento)).toStrictEqual([
-      'Ronda Sur',
-      'Ronda Sur',
-      'Ronda Sur',
-      'Ronda Sur',
+    expect(mesaDe(wrapper).map((fila) => fila.viento)).toStrictEqual([
+      'Este',
+      'Sur',
+      'Oeste',
+      'Norte',
     ])
   })
 
@@ -1902,7 +1893,6 @@ describe('T10 · viento por asiento', () => {
 
     expect(fila.texto).toContain('Ana')
     expect(fila.texto).toContain('Este')
-    expect(fila.texto).toContain('Ronda Este')
   })
 })
 /** Las casillas de yaku que se están pintando ahora mismo, en el orden en que salen. */
@@ -1943,6 +1933,24 @@ describe('T11 · buscador de yaku', () => {
     fakeReset()
   })
 
+  async function setYakuSearch(
+    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+    value: string,
+  ): Promise<void> {
+    const searchInput = wrapper.find('.multiselect__search-input')
+    if (searchInput.exists()) {
+      await searchInput.setValue(value)
+    } else {
+      // Fallback: trigger search change on multiselect component
+
+      const multiselect = wrapper.findComponent({ name: 'Multiselect' })
+      if (multiselect.exists()) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        await multiselect.vm.$emit('search-change', value)
+      }
+    }
+  }
+
   it('escribir texto deja solo las entradas que lo contienen', async () => {
     const game = await createGame()
     const { wrapper } = mountTurnForm(game)
@@ -1952,7 +1960,7 @@ describe('T11 · buscador de yaku', () => {
 
     const todos = yakuVisibles(wrapper)
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('riic')
+    await setYakuSearch(wrapper, 'riic')
 
     // «Riichi» y «Suucha Riichi» contienen lo escrito, y no es una coincidencia exacta: por eso son
     // dos y no uno.
@@ -1971,7 +1979,7 @@ describe('T11 · buscador de yaku', () => {
     await abrirMano(wrapper, game)
     await vi.waitFor(() => expect(yakuVisibles(wrapper).length).toBeGreaterThan(10))
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('  Riic  ')
+    await setYakuSearch(wrapper, '  Riic  ')
 
     expect(yakuVisibles(wrapper)).toStrictEqual(['riichi', 'suuchaRiichi'])
   })
@@ -1988,13 +1996,13 @@ describe('T11 · buscador de yaku', () => {
 
     const totalAntes = wrapper.find('[data-test="han-total"]').text()
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('qqqqqq')
+    await setYakuSearch(wrapper, 'qqqqqq')
 
     expect(yakuVisibles(wrapper)).toStrictEqual([])
     // El total del catálogo sigue igual: lo marcado no se ha perdido, solo está fuera de la vista.
     expect(wrapper.find('[data-test="han-total"]').text()).toBe(totalAntes)
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('')
+    await setYakuSearch(wrapper, '')
 
     expect(yakuMarcados(wrapper)).toStrictEqual(['riichi', 'tanyao'])
   })
@@ -2006,12 +2014,88 @@ describe('T11 · buscador de yaku', () => {
     await abrirMano(wrapper, game)
     await vi.waitFor(() => expect(yakuVisibles(wrapper)).toHaveLength(YAKU_CATALOG.length))
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('riic')
+    await setYakuSearch(wrapper, 'riic')
     expect(yakuVisibles(wrapper).length).toBeLessThan(YAKU_CATALOG.length)
 
-    await wrapper.find('input[name="yakuFilter"]').setValue('')
+    await setYakuSearch(wrapper, '')
 
     expect(yakuVisibles(wrapper)).toHaveLength(YAKU_CATALOG.length)
+  })
+})
+
+/**
+ * T15 · RF-34.4. Cada yaku se muestra como «japonés (inglés)», así que el buscador tiene que
+ * encontrarlo por **los dos nombres**: el kanji de la etiqueta y lo que va entre paréntesis. Y
+ * seguir siendo verdad lo de T11: filtrar es mirar la lista, no la captura, así que un yaku ya
+ * marcado sobrevive al filtro y vuelve marcado cuando el filtro se limpia.
+ */
+describe('T15 · el buscador encuentra por los dos nombres', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  async function setYakuSearch(
+    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+    value: string,
+  ): Promise<void> {
+    const searchInput = wrapper.find('.multiselect__search-input')
+    if (searchInput.exists()) {
+      await searchInput.setValue(value)
+    } else {
+      const multiselect = wrapper.findComponent({ name: 'Multiselect' })
+      if (multiselect.exists()) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        await multiselect.vm.$emit('search-change', value)
+      }
+    }
+  }
+
+  it('encuentra el yaku escribiendo parte de su nombre en inglés', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await vi.waitFor(() => expect(yakuVisibles(wrapper).length).toBeGreaterThan(10))
+
+    await setYakuSearch(wrapper, 'twice pure double sequence')
+
+    expect(yakuVisibles(wrapper)).toStrictEqual(['ryanpeikou'])
+  })
+
+  it('encuentra el yaku escribiendo parte de su nombre japonés', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await vi.waitFor(() => expect(yakuVisibles(wrapper).length).toBeGreaterThan(10))
+
+    await setYakuSearch(wrapper, '断幺')
+
+    expect(yakuVisibles(wrapper)).toStrictEqual(['tanyao'])
+  })
+
+  it('buscar por el nombre inglés no pierde las casillas ya marcadas', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirMano(wrapper, game)
+    await wrapper.find('input[type="checkbox"][value="riichi"]').setValue(true)
+    await wrapper.find('input[type="checkbox"][value="tanyao"]').setValue(true)
+    await declareRiichi(wrapper, 'east')
+    await vi.waitFor(() => expect(wrapper.find('[data-test="han-total"]').text()).toContain('2'))
+
+    const totalAntes = wrapper.find('[data-test="han-total"]').text()
+
+    await setYakuSearch(wrapper, 'full flush')
+
+    expect(yakuVisibles(wrapper)).toStrictEqual(['chinitsu'])
+    expect(wrapper.find('[data-test="han-total"]').text()).toBe(totalAntes)
+
+    await setYakuSearch(wrapper, '')
+
+    expect(yakuVisibles(wrapper)).toHaveLength(YAKU_CATALOG.length)
+    expect(yakuMarcados(wrapper)).toStrictEqual(['riichi', 'tanyao'])
   })
 })
 
@@ -2156,7 +2240,7 @@ describe('T18-T20 · ayuda y referencia', () => {
     authenticate(pinia)
 
     await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 3, fu: 40 }, ['tanyao'])
-    await wrapper.find('input[name="yakuFilter"]').setValue('tan')
+    await setYakuSearch(wrapper, 'tan')
 
     const draftKey = `mahjongbu.turn-draft.${game.id}`
     const draftAntes = localStorage.getItem(draftKey)
@@ -2170,10 +2254,25 @@ describe('T18-T20 · ayuda y referencia', () => {
 
     expect((wrapper.find('input[name="doraCount"]').element as HTMLInputElement).value).toBe('3')
     expect((wrapper.find('input[name="fu"]').element as HTMLInputElement).value).toBe('40')
-    expect((wrapper.find('input[name="yakuFilter"]').element as HTMLInputElement).value).toBe('tan')
     expect(localStorage.getItem(draftKey)).toBe(draftAntes)
     expect(wrapper.emitted('saved')).toBeUndefined()
   })
+
+  async function setYakuSearch(
+    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+    value: string,
+  ): Promise<void> {
+    const searchInput = wrapper.find('.multiselect__search-input')
+    if (searchInput.exists()) {
+      await searchInput.setValue(value)
+    } else {
+      const multiselect = wrapper.findComponent({ name: 'Multiselect' })
+      if (multiselect.exists()) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+        await multiselect.vm.$emit('search-change', value)
+      }
+    }
+  }
 })
 
 /**
@@ -2188,5 +2287,368 @@ describe('T21 · la tabla de puntuación existe (RF-28.4)', () => {
     const bytes = await readFile(ruta)
 
     expect(bytes.byteLength).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * T07 · RF-31.1 y RF-31.2. El contexto de la mano —si está **cerrada** y si tuvo **kan**— es de
+ * cada ganador: una mano abierta y con kan no es la mano del vecino. Antes de 004 la captura no
+ * lo preguntaba y el motor lo suponía cerrado y sin kan, que es justo lo que RF-31.5 complains que
+ * se capturara de verdad.
+ */
+describe('la mano por ganador', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  /** Un ron con dos ganadores: Este y Sur. */
+  async function abrirRon(
+    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+    game: GameRecord,
+  ): Promise<void> {
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="hand-south"]').exists()).toBe(true))
+  }
+
+  it('cada ganador tiene su control de mano abierta/cerrada y su control de kan', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+
+    expect(wrapper.find('[data-test="hand-east-closed"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="hand-east-kan"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="hand-south-closed"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="hand-south-kan"]').exists()).toBe(true)
+  })
+
+  it('los valores por defecto son cerrada y sin kan', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+
+    for (const seat of ['east', 'south']) {
+      expect(
+        (wrapper.find(`[data-test="hand-${seat}-closed"]`).element as HTMLInputElement).checked,
+      ).toBe(true)
+      expect(
+        (wrapper.find(`[data-test="hand-${seat}-kan"]`).element as HTMLInputElement).checked,
+      ).toBe(false)
+    }
+  })
+
+  it('el kan de un ganador no es el kan del otro', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+    await wrapper.find('[data-test="hand-south-kan"]').setValue(true)
+    await nextTick()
+
+    expect((wrapper.find('[data-test="hand-south-kan"]').element as HTMLInputElement).checked).toBe(
+      true,
+    )
+    expect((wrapper.find('[data-test="hand-east-kan"]').element as HTMLInputElement).checked).toBe(
+      false,
+    )
+  })
+
+  it('el contexto capturado llega al turno guardado (RF-31.7)', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await abrirRon(wrapper, game)
+    await wrapper.find('select[name="discarderId"]').setValue(playerOf(game, 3))
+    await wrapper.find('[data-test="hand-south-kan"]').setValue(true)
+    await wrapper.find('[data-test="hand-south-closed"]').setValue(false)
+    await wrapper.find('input[name="doraCount"]').setValue('0')
+    await wrapper.find('input[name="fu"]').setValue('30')
+    await wrapper.find('input[type="checkbox"][value="tanyao"]').setValue(true)
+
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    const record = wrapper.emitted('saved')?.[0]?.[0] as {
+      handContext?: readonly {
+        playerId: PlayerId
+        isClosedHand: boolean
+        hasKan: boolean
+      }[]
+    }
+
+    const este = record.handContext?.find((entry) => entry.playerId === playerOf(game, 0))
+    const sur = record.handContext?.find((entry) => entry.playerId === playerOf(game, 1))
+
+    expect(este?.isClosedHand).toBe(true)
+    expect(este?.hasKan).toBe(false)
+    expect(sur?.isClosedHand).toBe(false)
+    expect(sur?.hasKan).toBe(true)
+  })
+
+  it('el borrador conserva el contexto de cada ganador', async () => {
+    const game = await createGame()
+    const first = mountTurnForm(game)
+
+    await first.wrapper.find('select[name="resultType"]').setValue('ron')
+    await first.wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await first.wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+    await vi.waitFor(() =>
+      expect(first.wrapper.find('[data-test="hand-south"]').exists()).toBe(true),
+    )
+    await first.wrapper.find('[data-test="hand-south-kan"]').setValue(true)
+    await nextTick()
+
+    first.wrapper.unmount()
+
+    const second = mountTurnForm(game)
+    await nextTick()
+
+    expect(
+      (second.wrapper.find('[data-test="hand-south-kan"]').element as HTMLInputElement).checked,
+    ).toBe(true)
+    expect(
+      (second.wrapper.find('[data-test="hand-east-kan"]').element as HTMLInputElement).checked,
+    ).toBe(false)
+  })
+
+  it('quitar al primer ganador deja la mano de los que quedan', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+    await wrapper.find('input[name="doraCount"]').setValue('3')
+    await wrapper.find('[data-test="hand-south"]').find('input[name="doraCount"]').setValue('1')
+    await nextTick()
+
+    await wrapper.find('[data-test="winner-east"] button').trigger('click')
+    await nextTick()
+
+    const doras = wrapper.findAll('input[name="doraCount"]')
+
+    expect(doras).toHaveLength(1)
+    expect((doras[0]?.element as HTMLInputElement).value).toBe('1')
+  })
+})
+
+/**
+ * T08 · RF-32.1 y RF-32.3. Un ron múltiple tiene **una mano por ganador**, y el ajuste de han sigue
+ * siendo un delta sobre la suma del catálogo **de ese ganador** (RF-22.9): no un total absoluto que
+ * se reparta entre los que ganan.
+ */
+describe('el desglose por ganador en un ron múltiple', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  async function abrirRon(
+    wrapper: ReturnType<typeof mountTurnForm>['wrapper'],
+    game: GameRecord,
+  ): Promise<void> {
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="hand-south"]').exists()).toBe(true))
+  }
+
+  it('con dos ganadores hay dos juegos de yaku, han, ajuste, dora y fu', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+
+    expect(wrapper.findAll('[data-test="yaku-options"]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-test="han-total"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[name="yakuHanOverride"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[name="doraCount"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[name="fu"]')).toHaveLength(2)
+  })
+
+  it('el ajuste de cada ganador es un delta sobre la suma de su propio catálogo', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await abrirRon(wrapper, game)
+    await wrapper.find('select[name="discarderId"]').setValue(playerOf(game, 3))
+    await wrapper.find('input[name="doraCount"]').setValue('0')
+    await wrapper.find('input[name="fu"]').setValue('30')
+    await wrapper.find('input[type="checkbox"][value="tanyao"]').setValue(true)
+    await wrapper.find('input[name="yakuHanOverride"]').setValue('2')
+    await wrapper
+      .find('[data-test="hand-south"]')
+      .find('input[type="checkbox"][value="toitoi"]')
+      .setValue(true)
+    await wrapper
+      .find('[data-test="hand-south"]')
+      .find('input[name="yakuHanOverride"]')
+      .setValue('-1')
+    await nextTick()
+
+    // El primero suma 1 han del catálogo y 2 de ajuste; el segundo, 3 del catálogo y -1 de ajuste.
+    const totales = wrapper.findAll('[data-test="han-total"]').map((element) => element.text())
+
+    expect(totales[0]).toContain('3')
+    expect(totales[1]).toContain('2')
+
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    const record = wrapper.emitted('saved')?.[0]?.[0] as {
+      winnerHands?: readonly {
+        playerId: PlayerId
+        yaku: readonly string[]
+        yakuHan: number
+        yakuHanOverride: number
+        doraCount: number
+        fu: number
+      }[]
+    }
+
+    expect(record.winnerHands).toHaveLength(2)
+
+    const este = record.winnerHands?.find((entry) => entry.playerId === playerOf(game, 0))
+    const sur = record.winnerHands?.find((entry) => entry.playerId === playerOf(game, 1))
+
+    expect(este?.yakuHan).toBe(1)
+    expect(este?.yakuHanOverride).toBe(2)
+    expect(sur?.yakuHan).toBe(3)
+    expect(sur?.yakuHanOverride).toBe(-1)
+    expect(sur?.yaku).toContain('toitoi')
+  })
+
+  it('la mano de un ganador no se mueve cuando se edita la del otro', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await abrirRon(wrapper, game)
+    await wrapper.find('input[name="doraCount"]').setValue('3')
+    await wrapper.find('[data-test="hand-south"]').find('input[name="doraCount"]').setValue('1')
+    await nextTick()
+
+    const doras = wrapper.findAll('input[name="doraCount"]')
+
+    expect((doras[0]?.element as HTMLInputElement).value).toBe('3')
+    expect((doras[1]?.element as HTMLInputElement).value).toBe('1')
+  })
+})
+
+/**
+ * T09 · RF-32.2. Un turno con un solo ganador —o un tsumo— sigue guardando el desglose con la
+ * forma de siempre, en los campos del turno, y no obliga a nadie a rellenar nada por ganador.
+ */
+describe('un solo ganador', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('no hay que rellenar nada por ganador', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('select[name="resultType"]').setValue('tsumo')
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="hand-east"]').exists()).toBe(true))
+
+    expect(wrapper.findAll('[data-test="yaku-options"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-test="han-total"]')).toHaveLength(1)
+    expect(wrapper.findAll('input[name="yakuHanOverride"]')).toHaveLength(1)
+    expect(wrapper.findAll('input[name="doraCount"]')).toHaveLength(1)
+    expect(wrapper.findAll('input[name="fu"]')).toHaveLength(1)
+  })
+
+  it('el guardado es el de siempre: los campos del turno y sin desglose por ganador', async () => {
+    const game = await createGame()
+    const { wrapper, pinia } = mountTurnForm(game)
+
+    authenticate(pinia)
+    await setWinHand(wrapper, { winner: playerOf(game, 0), dora: 2, fu: 30 }, ['tanyao'])
+    await wrapper.find('form').trigger('submit')
+    await vi.waitFor(() => expect(wrapper.emitted('saved')).toBeDefined())
+
+    const record = wrapper.emitted('saved')?.[0]?.[0] as {
+      yaku: readonly string[]
+      yakuHan: number
+      yakuHanOverride: number
+      doraCount: number
+      fu: number
+      winnerHands?: readonly unknown[]
+      handContext?: readonly unknown[]
+    }
+
+    expect(record.yaku).toStrictEqual(['tanyao'])
+    expect(record.yakuHan).toBe(1)
+    expect(record.yakuHanOverride).toBe(0)
+    expect(record.doraCount).toBe(2)
+    expect(record.fu).toBe(30)
+    expect(record.winnerHands).toBeUndefined()
+    // El contexto sí se guarda (RF-31.7): es lo que permite volver a derivar la mano.
+    expect(record.handContext).toHaveLength(1)
+  })
+})
+
+/**
+ * T10 · RF-31.3 y RF-31.4. El desglose señala el yaku que **no** cuenta, y lo dice por el contexto
+ * de **ese** ganador: marcar kan quita el `ippatsu` de quien hizo kan y no se lo quita al vecino.
+ */
+describe('los yaku que no cuentan se señalan por ganador', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    fakeReset()
+  })
+
+  it('el kan de un ganador excluye su ippatsu y no el del otro', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="hand-south"]').exists()).toBe(true))
+
+    await declareRiichi(wrapper, 'east')
+    await wrapper.find('input[type="checkbox"][value="ippatsu"]').setValue(true)
+    await wrapper.find('[data-test="hand-south-kan"]').setValue(true)
+    await nextTick()
+
+    const desgloses = wrapper
+      .findAll('[data-test="han-breakdown"]')
+      .map((element) => element.text())
+
+    expect(desgloses[0]).toContain('Ippatsu')
+    expect(desgloses[0]).not.toContain('no cuenta')
+    expect(desgloses[1]).toContain('Ippatsu')
+    expect(desgloses[1]).toContain('no cuenta')
+    expect(desgloses[1]).toContain('que no haya kan')
+  })
+
+  it('la mano abierta de un ganador excluye sus yaku de mano cerrada', async () => {
+    const game = await createGame()
+    const { wrapper } = mountTurnForm(game)
+
+    await wrapper.find('select[name="resultType"]').setValue('ron')
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 0))
+    await wrapper.find('select[name="winnerId"]').setValue(playerOf(game, 1))
+    await vi.waitFor(() => expect(wrapper.find('[data-test="hand-south"]').exists()).toBe(true))
+
+    await wrapper.find('input[type="checkbox"][value="pinfu"]').setValue(true)
+    await wrapper.find('[data-test="hand-south-closed"]').setValue(false)
+    await nextTick()
+
+    const desgloses = wrapper
+      .findAll('[data-test="han-breakdown"]')
+      .map((element) => element.text())
+
+    expect(desgloses[0]).toContain('Pinfu')
+    expect(desgloses[0]).not.toContain('no cuenta')
+    expect(desgloses[1]).toContain('Pinfu')
+    expect(desgloses[1]).toContain('no cuenta')
+    expect(desgloses[1]).toContain('la mano cerrada')
   })
 })

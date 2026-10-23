@@ -35,6 +35,7 @@ y comprobar los `peerDependencies` del paquete afectado.
 | CLI de Firebase   | `firebase-tools`       | `15.32.1`|
 | Estilos           | `tailwindcss` + `@tailwindcss/vite` | `4.3.3` |
 | Gráficas          | `chart.js`             | `4.5.1`  |
+| Selección         | `@vueform/multiselect` | `2.6.11` |
 | Textos            | `vue-i18n`             | `11.4.13`|
 | Lint              | `eslint` + `typescript-eslint` + `eslint-plugin-vue` | `10.12.0` / `8.71.0` / `10.11.1` |
 | Formato           | `prettier` + `@vue/eslint-config-prettier` | `3.9.9` / `10.2.0` |
@@ -332,7 +333,7 @@ Consecuencias que el código tiene que respetar:
 | `players/{playerId}`                            | `externalId`, `name`, `active`, `createdAt`, `updatedAt`                                       |
 | `seasons/{seasonId}`                            | `title`, `dateFrom`, `dateTo`, `status`, `createdAt`, `updatedAt`                              |
 | `games/{gameId}`                                | `seasonId`, `date`, `gameLength`, `ruleset`, `rulesetVersion`, `startPoints`, `status`, `mustFinalize`, `results[]`, `finalizationAudit[]`, `turnAudit[]`, `createdAt`, `updatedAt` |
-| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `yakuHanOverride`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `discarderId`, `chomboId`, `value[]`, `deltas[]`, `capturedBy`, `updatedBy`, `updatedAt`, `isRenchan`, `isFinalTurn`, `audit[]`, `createdAt` |
+| `games/{gameId}/turns/{turnNo}`                 | `turnNo`, `wind`, `dealerId`, `honba`, `resultType`, `yaku[]`, `yakuHan`, `yakuHanOverride`, `doraCount`, `fu`, `tenpai[]`, `riichiDeclaredBy[]`, `riichiSticks`, `discarderId`, `chomboId`, `value[]`, `deltas[]`, `capturedBy`, `updatedBy`, `updatedAt`, `isRenchan`, `isFinalTurn`, `audit[]`, `createdAt`, `handContext?`, `winnerHands?` |
 | `playerSeasonStats/{playerId}/stats/{seasonId}` | ID = temporada. `playerId`, `seasonId`, `actualPoints`, `gamesPlayed`, `victories`, `positions`, `yakuStats` |
 | `rankings/{seasonId}/players/{playerId}`        | ID compuesto. `playerId`, `seasonId`, `points`, `gamesPlayed`, `rank`, `updatedAt`           |
 
@@ -396,6 +397,8 @@ Detalle de los campos estructurados:
   `1`—. El relleno a dos dígitos rompía el orden lexicográfico a partir del turno 100, y ese techo llevaba
   dos revisiones abierto. **El orden lo fija el campo numérico `turnNo`, nunca el identificador del
   documento**: `list()` ordena por `turnNo` y eso basta. La numeración es correlativa y sin huecos.
+- `handContext?`: opcional, array de contexto por ganador para RF-31.7. Cada entrada: `{ playerId, isClosedHand, hasKan }`. Solo existe en turnos con resultado de mano (tsumo/ron). Los turnos escritos antes de 004 no lo tienen y se leen como mano cerrada sin kan.
+- `winnerHands?`: opcional, desglose por ganador para RF-32.1. Solo existe en ron múltiple. Cada entrada: `{ playerId, yaku[], yakuHan, yakuHanOverride, doraCount, fu }`. Los turnos de un solo ganador o tsumo no lo tienen.
 - `positions`: `'1st' | '2nd' | '3rd' | '4th'`, y en `playerSeasonStats` el desglose
   `Record<Position, number>`. `yakuStats`: `riichi`, `dora`, `kan`, `tsumo`, `ron`, `chombo`,
   `haiteiRaoyue`, `rinshanKaihou`, `yakuman`. `yakuman` cuenta **manos** con yaku de límite o 13+ han,
@@ -514,6 +517,10 @@ está acotado, pero **no** es una garantía del servidor. Si algún día hace fa
   **un test por comportamiento de pantalla**, para que no se añada interfaz sin comprobar. Sin
   escribirlo, la siguiente especificación de interfaz copia la puerta vacía y hereda un criterio que no
   muerde.
+- **La puerta de una especificación que SÍ escribe en `domain/` vuelve a ser la de la constitución:**
+  100 % de cobertura de `src/domain/` (IV.1) + `git diff --name-only src/domain` **con los cambios
+  declarados** y sin cambios extra. 004 lo ilustra: el dominio cambió y la puerta volvió a ser la
+  cobertura, no el diff vacío.
 - **Esa segunda mitad tiene guardián.** `src/__tests__/trazabilidad.test.ts` lee la lista de RF de
   `specs/003/spec.md` desde el disco y **falla enumerando los RF que ningún test cita**. Un RF
   implementado y marcado `[x]` sin una sola aserción —lo que pasó con RF-26— deja de ser un verde
@@ -574,6 +581,12 @@ Una sola forma por categoría.
   expresar en utilidades.
 - Tokens de color, espaciado y tipografía en el bloque `@theme` de `src/styles/main.css`.
   **Prohibido** escribir colores hexadecimales sueltos en `<style scoped>`.
+- **El tema es el único dueño de la paleta.** Ningún componente escribe un color: ni en su
+  `<style scoped>` ni en una clase suelta; usa la utilidad del token (`bg-mahjong-surface`,
+  `text-mahjong-negative`, `bg-mahjong-positive/10`). `src/__tests__/styles.test.ts` lo comprueba
+  con una búsqueda en todos los `.vue` (RF-35.2).
+- **Un token cambia de valor, nunca de nombre.** El nombre es la API que consumen los componentes, y
+  cambiarlo obliga a tocar todos ellos; el valor sí es desechable (spec §9.2, decisión 10 del plan).
 - Tema **dark** como único tema soportado, con su variable de conmutación preparada en `@theme`.
 - Variantes de componente declaradas como tabla (patrón `cva`) en vez de condicionales dispersos en
   el template.

@@ -2,20 +2,68 @@
  * T84 · Tokens de diseño y tema único dark (AGENT.md → Tailwind). Las variables viven en
  * `@theme` de Tailwind v4 y generan utilitates como `bg-mahjong-surface`; los componentes
  * no escriben hexadecimales sueltos en su `<style scoped>` (constitution, AGENT.md → Tailwind).
+ *
+ * T16 · RF-35.1, RF-35.2 y RF-35.10. Los tokens **conservan su nombre** y **cambian de valor**
+ * a los del documento de estilos (`docs/especificaci_n_de_estilos_ui_ux.md` §2.1): migrar valores
+ * deja el `git diff` de los componentes casi vacío y el riesgo es mecánico (spec §9.2, decisión 10
+ * del plan). Los colores del documento que no tenían token se declaran aquí (`004-qa.md` B10).
  */
 @import 'tailwindcss';
 
+/*
+ * T17 · Las familias del documento, **autoalojadas** (RF-35.8): los `.woff2` viajan con el bundle
+ * y la aplicación no hace ninguna llamada a un servidor externo. Solo el subconjunto latino, que
+ * cubre el español. Los pesos son los que el tema usa: medio, seminegrita y negrita.
+ */
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/outfit/latin-500.css';
+@import '@fontsource/outfit/latin-600.css';
+@import '@fontsource/outfit/latin-700.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-700.css';
+
 @theme {
-  --color-mahjong-bg: #10131a;
-  --color-mahjong-surface: #1a1f29;
-  --color-mahjong-border: #2c3442;
-  --color-mahjong-text: #e6e9f0;
-  --color-mahjong-muted: #9aa3b2;
-  --color-mahjong-accent: #e5484d;
-  --color-mahjong-accent-soft: #f2555a;
-  --color-mahjong-positive: #30a46c;
-  --color-mahjong-negative: #e5484d;
-  --color-mahjong-warning: #f5a623;
+  /* Superficies del documento (`bg.*`). */
+  --color-mahjong-bg: #090d16;
+  --color-mahjong-surface: #111827;
+  --color-mahjong-border: #1f2937;
+
+  /* Texto: el documento usa `text-white` para lo que destaca y `text-slate-400` para las etiquetas. */
+  --color-mahjong-text: #ffffff;
+  --color-mahjong-muted: #94a3b8;
+
+  /* Acentos del documento (`mahjong.*`): rojo, verde, azul y oro. El rojo es `accent` y el verde
+     es `positive`, pero el documento los nombra y T18 usa esos nombres para las acciones. */
+  --color-mahjong-accent: #e63946;
+  --color-mahjong-accent-soft: #ef4444;
+  --color-mahjong-positive: #10b981;
+  --color-mahjong-negative: #e63946;
+  --color-mahjong-warning: #f59e0b;
+  --color-mahjong-green: #10b981;
+  --color-mahjong-blue: #3b82f6;
+  --color-mahjong-gold: #f59e0b;
+  --color-silver: #94a3b8;
+  --color-amber-600: #d97706;
+
+  /* Vientos del documento (`wind.*`): la etiqueta de color de cada asiento. */
+  --color-mahjong-east: #ef4444;
+  --color-mahjong-south: #3b82f6;
+  --color-mahjong-west: #10b981;
+  --color-mahjong-north: #8b5cf6;
+
+  /* Tipografía del documento (`fontFamily`): cuerpo, marcador y títulos. */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-display: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+
+  /* Sombras del documento (`boxShadow.glow-*`). */
+  --shadow-glow-red: 0 0 15px -3px rgb(230 57 70 / 0.4);
+  --shadow-glow-green: 0 0 15px -3px rgb(16 185 129 / 0.4);
+  --shadow-glow-blue: 0 0 15px -3px rgb(59 130 246 / 0.4);
+  --shadow-glow-gold: 0 0 15px -3px rgb(245 158 11 / 0.4);
 }
 
 :root {

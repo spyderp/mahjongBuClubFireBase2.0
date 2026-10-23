@@ -25,6 +25,11 @@ spec, no un `npm update`. El motivo queda escrito junto a la versión.
 > Restricciones vigentes: `typescript-eslint@8` no admite TypeScript ≥ 6.1, y `vitest@5` no admite
 > Node 20. Por eso TypeScript está en `~5.9.x` y Node en `^22.12.0 || ^24.0.0 || >=26.0.0`.
 
+> **Enmienda 004-T20:** `@vueform/multiselect@2.6.11` se añade para RF-35.5 (selector de yaku con búsqueda
+> por etiquetas). No declara `peerDependencies` explícitas; es compatible con Vue 3. Se comprueba contra
+> `typescript ~5.9.3`, `vue 3.5.43`, `vite 8.3.2`. Si en el futuro aparecen conflictos de peers, se
+> revisa y la versión se actualiza con justificación en `AGENT.md` y en esta enmienda.
+
 ## III. Verificación
 
 **III.1 — Los cuatro en verde, en orden.** `typecheck`, `lint`, `test` y `format:check`, en ese

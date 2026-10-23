@@ -37,11 +37,13 @@ async function confirmRetire(): Promise<void> {
 <template>
   <section>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-xl font-semibold">
+      <h1 class="font-display text-xl font-semibold">
         {{ t(creating ? 'playersView.newTitle' : 'playersView.title') }}
       </h1>
-      <RouterLink v-if="!creating" to="/jugadores/nuevo" class="text-sm text-mahjong-accent">
-        {{ t('nav.newPlayer') }}
+      <RouterLink v-if="!creating" to="/jugadores/nuevo">
+        <BaseButton variant="info">
+          {{ t('nav.newPlayer') }}
+        </BaseButton>
       </RouterLink>
     </div>
 
@@ -80,7 +82,7 @@ async function confirmRetire(): Promise<void> {
               :class="[
                 'rounded-full px-3 py-1 text-sm',
                 player.active
-                  ? 'bg-mahjong-accent/10 text-mahjong-accent'
+                  ? 'bg-mahjong-positive/10 text-mahjong-positive'
                   : 'bg-mahjong-border/40 text-mahjong-muted',
               ]"
             >
@@ -89,6 +91,7 @@ async function confirmRetire(): Promise<void> {
             <BaseButton
               v-if="player.active"
               variant="danger"
+              size="sm"
               @click="retireTarget = { id: player.id, name: player.name }"
             >
               {{ t('playersView.retire') }}

@@ -119,12 +119,20 @@ const evolutionSeries = computed<readonly { label: string; points: readonly numb
     points: byPlayer.get(player.playerId) ?? [],
   }))
 })
+
+/** RF-35.7: destaca las tres primeras posiciones en la tabla de clasificación. */
+function rankClass(index: number): string {
+  if (index === 0) return 'text-mahjong-gold font-bold'
+  if (index === 1) return 'text-silver font-semibold'
+  if (index === 2) return 'text-amber-600 font-medium'
+  return ''
+}
 </script>
 
 <template>
   <section>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-xl font-semibold">
+      <h1 class="font-display text-xl font-semibold">
         {{ t('statsView.title') }}
       </h1>
       <label class="block max-w-xs">
@@ -159,21 +167,22 @@ const evolutionSeries = computed<readonly { label: string; points: readonly numb
         </thead>
         <tbody>
           <tr
-            v-for="player in stats ?? []"
+            v-for="(player, index) in stats ?? []"
             :key="player.playerId"
             class="border-b border-mahjong-border last:border-b-0"
+            :class="index < 3 ? 'bg-mahjong-border/20' : ''"
           >
-            <td class="px-3 py-2">
+            <td class="px-3 py-2" :class="rankClass(index)">
               <RouterLink
                 :to="`/partidas?season=${String(selectedSeason)}&player=${player.playerId}`"
-                class="text-mahjong-accent hover:underline"
+                class="text-mahjong-accent hover:underline font-medium"
               >
                 {{ nameOf(player.playerId) }}
               </RouterLink>
             </td>
             <td class="px-3 py-2 text-end">{{ player.gamesPlayed }}</td>
             <td class="px-3 py-2 text-end">{{ player.victories }}</td>
-            <td class="px-3 py-2 text-end">{{ player.actualPoints }}</td>
+            <td class="px-3 py-2 text-end font-mono">{{ player.actualPoints }}</td>
           </tr>
         </tbody>
       </table>

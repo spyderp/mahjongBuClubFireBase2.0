@@ -3,6 +3,7 @@ import type { HandOutcome, HandState } from './rules'
 import { checkSquare, resolveTurn } from './turn'
 import type { PlayerDelta, TurnInput, TurnResolution, TurnValue } from './turn'
 import { isWindYaku, validateWindYaku } from './yaku'
+import type { YakuId } from './yaku'
 import type { HandValueInput } from './handValue'
 import type { PlayerId, ResultType, Seat, Wind } from './types'
 
@@ -26,10 +27,27 @@ export type ReplayPlayer = {
  * Solo aparecen los campos que escribió quien captura. La ronda, la localía y el honba no están
  * aquí porque se derivan (RF-18.13).
  */
+/**
+ * La mano de **un** ganador, con su contexto (RF-31.7). Solo hay una por ganador cuando el ron
+ * tiene más de uno: en el caso de un solo ganador la mano es la del turno.
+ */
+export type CapturedWinnerHand = {
+  readonly playerId: PlayerId
+  readonly hand: HandValueInput
+}
+
 export type CapturedTurn = {
   readonly turnNo: number
   readonly resultType: ResultType
   readonly hand: HandValueInput
+  /**
+   * RF-32.1: el desglose por ganador de un ron múltiple. Cuando está, cada ganador recalcula con
+   * **su** mano —y su contexto—, y no con la del turno.
+   *
+   * Es opcional porque los turnos escritos antes de `specs/004` no lo tienen, y porque un turno con
+   * un solo ganador no lo necesita (RF-32.2): su desglose es el del turno, como siempre.
+   */
+  readonly winnerHands?: readonly CapturedWinnerHand[]
   readonly winners: readonly PlayerId[]
   readonly discarderId: PlayerId | null
   readonly chomboId: PlayerId | null
@@ -198,22 +216,53 @@ function resolveCaptured(
  * RF-18.10: un yaku de viento sigue siendo válido si lo posee **algún** ganador. No se valida cada
  * yaku contra cada ganador porque en un ron múltiple solo uno puede tener el asiento o la ronda que
  * ese yaku exige, y exigirlo a los demás rechazaría manos correctas.
+ *
+ * RF-32.1: cuando el turno trae desglose por ganador, cada yaku de viento se comprueba contra **su**
+ * ganador, que es quien tiene ese asiento o esa ronda. Sin desglose —un solo ganador, o un turno
+ * anterior a 004— la mano es la del turno y vale la regla de siempre.
  */
 function windYakuStillValid(
   captured: CapturedTurn,
   table: readonly ReplayPlayer[],
   roundWind: Wind,
 ): boolean {
-  return captured.hand.yaku.filter(isWindYaku).every((yaku) =>
-    captured.winners.some((winnerId) => {
+  const perWinner = captured.winnerHands ?? []
+
+  if (perWinner.length > 0) {
+    return perWinner.every((entry) =>
+      windYakuValidFor(entry.hand.yaku, [entry.playerId], table, roundWind),
+    )
+  }
+
+  return windYakuValidFor(captured.hand.yaku, captured.winners, table, roundWind)
+}
+
+function windYakuValidFor(
+  yaku: readonly YakuId[],
+  winnerIds: readonly PlayerId[],
+  table: readonly ReplayPlayer[],
+  roundWind: Wind,
+): boolean {
+  return yaku.filter(isWindYaku).every((wind) =>
+    winnerIds.some((winnerId) => {
       const seat = table.find((player) => player.playerId === winnerId)?.seat
 
-      return seat !== undefined && validateWindYaku([yaku], { seat, roundWind }).ok
+      return seat !== undefined && validateWindYaku([wind], { seat, roundWind }).ok
     }),
   )
 }
 
 type TurnInputResult = { readonly ok: true; readonly value: TurnInput } | { readonly ok: false }
+
+/**
+ * La mano de un ganador (RF-32.1): la suya propia si el turno trae desglose por ganador, y la del
+ * turno si no lo trae —que es el caso de un solo ganador y el de todos los turnos anteriores a 004.
+ */
+function handOfWinner(captured: CapturedTurn, playerId: PlayerId): HandValueInput {
+  const own = captured.winnerHands?.find((entry) => entry.playerId === playerId)
+
+  return own?.hand ?? captured.hand
+}
 
 function turnInput(
   captured: CapturedTurn,
@@ -232,8 +281,16 @@ function turnInput(
     honba: state.honba,
     riichiDeclaredBy: captured.riichiDeclaredBy,
     riichiSticksBefore,
+    /**
+     * RF-31.5: la primera mano de la partida la sabe el número de turno, no la captura. Los yaku
+     * que solo cuentan en ella (`tenhou`, `chiihou`, `suuchaRiichi`) lo necesitan.
+     */
+    isFirstHand: captured.turnNo === 1,
   }
-  const winners = captured.winners.map((playerId) => ({ playerId, hand: captured.hand }))
+  const winners = captured.winners.map((playerId) => ({
+    playerId,
+    hand: handOfWinner(captured, playerId),
+  }))
 
   if (captured.resultType === 'tsumo') {
     return { ok: true, value: { ...base, resultType: 'tsumo', winners } }

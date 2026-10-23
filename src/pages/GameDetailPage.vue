@@ -11,15 +11,16 @@ import { toGameId } from '@/domain/types'
 import type { PlayerId, Position, Seat, Timestamp } from '@/domain/types'
 import { offersAbandon } from '@/domain/game'
 import type { GameRecord } from '@/data/games.repository'
+import { DataError } from '@/data/errors'
 import { useSessionStore } from '@/stores/session'
 
 const props = defineProps<{ gameId: string }>()
 
-const { t, d } = useI18n()
+const { t, d, n } = useI18n()
 const session = useSessionStore()
 const gameId = computed(() => toGameId(props.gameId))
 const { state: gameState, refresh: refreshGame } = useGameDetail(gameId)
-const { data: turns, nextHand } = useGameTurns(gameId)
+const { data: turns, nextHand, deleteTurn } = useGameTurns(gameId)
 const { data: players } = usePlayers()
 
 /**
@@ -42,6 +43,9 @@ const { finalizeGame, unfinalizeGame, abandonGame } = useGames()
 const finalizeDialog = ref(false)
 const unfinalizeDialog = ref(false)
 const abandonDialog = ref(false)
+const deleteTurnDialog = ref(false)
+const deleteTurnNo = ref<number | null>(null)
+const deleteTurnError = ref<string | null>(null)
 
 const by = computed(() => session.user?.id ?? '')
 
@@ -102,6 +106,21 @@ function fieldLabel(field: string): string {
   return t(AUDIT_FIELDS[field] ?? 'turnForm.yaku')
 }
 
+function windBadgeClass(seat: Seat): string {
+  switch (seat) {
+    case 'east':
+      return 'bg-mahjong-wind-east'
+    case 'south':
+      return 'bg-mahjong-wind-south'
+    case 'west':
+      return 'bg-mahjong-wind-west'
+    case 'north':
+      return 'bg-mahjong-wind-north'
+    default:
+      return 'bg-mahjong-border'
+  }
+}
+
 const standby = computed(() => {
   if (turns.value === undefined || game.value === undefined) {
     return []
@@ -146,6 +165,55 @@ const standings = computed<readonly Standing[]>(() => {
 })
 
 const riichiSticks = computed(() => turns.value?.at(-1)?.riichiSticks ?? 0)
+
+/** Estado de la mesa para el último turno capturado (o estado actual si no hay turnos). */
+const mesa = computed(() => {
+  const current = game.value
+  const lastTurn = turns.value?.at(-1)
+
+  if (!current) {
+    return []
+  }
+
+  const baseScores = new Map<PlayerId, number>()
+  for (const participant of current.players) {
+    baseScores.set(participant.playerId, current.startPoints)
+  }
+
+  if (turns.value && turns.value.length > 0) {
+    for (const turn of turns.value) {
+      for (const delta of turn.deltas) {
+        baseScores.set(delta.playerId, (baseScores.get(delta.playerId) ?? current.startPoints) + delta.delta)
+      }
+    }
+  }
+
+  const lastResultType = lastTurn?.resultType
+  const winnerIds = lastTurn?.deltas.filter(d => d.delta > 0).map(d => d.playerId) ?? []
+  const ronLoserId = lastResultType === 'ron' ? lastTurn?.discarderId : undefined
+
+  return current.players.map((participant) => {
+    const playerId = participant.playerId
+    const score = baseScores.get(playerId) ?? current.startPoints
+    const delta = lastTurn?.deltas.find(d => d.playerId === playerId)?.delta ?? 0
+    const isDealer = participant.seat === (lastTurn?.dealerId ?? nextHand.value?.dealer)
+    const hasRiichi = lastTurn?.riichiDeclaredBy?.includes(playerId) ?? false
+
+    return {
+      playerId,
+      name: nameOf(playerId),
+      seat: participant.seat,
+      score,
+      delta,
+      deltaClass: delta > 0 ? 'text-mahjong-positive' : delta < 0 ? 'text-mahjong-negative' : 'text-mahjong-muted',
+      deltaText: delta > 0 ? `+${delta}` : String(delta),
+      isWinner: winnerIds.includes(playerId),
+      isRonLoser: ronLoserId === playerId,
+      isDealer,
+      hasRiichi,
+    }
+  })
+})
 
 /** El dealer de la mano siguiente: el jugador que ocupa el asiento que el recorrido devuelve. */
 const dealerId = computed<PlayerId | ''>(() => {
@@ -241,6 +309,28 @@ async function confirmAbandon(): Promise<void> {
   abandonDialog.value = false
 }
 
+async function confirmDeleteTurn(): Promise<void> {
+  if (game.value === undefined || deleteTurnNo.value === null) {
+    return
+  }
+
+  deleteTurnError.value = null
+
+  try {
+    const turnCount = turns.value?.length ?? 0
+    await deleteTurn.mutateAsync({ turnNo: deleteTurnNo.value, by: by.value, expectedTurnCount: turnCount })
+    await refreshGame()
+    deleteTurnDialog.value = false
+    deleteTurnNo.value = null
+  } catch (error) {
+    if (error instanceof DataError && error.code === 'staleLocal') {
+      deleteTurnError.value = t('gamesView.deleteTurnStale')
+    } else {
+      deleteTurnError.value = error instanceof Error ? error.message : 'Error desconocido'
+    }
+  }
+}
+
 function now(): { seconds: number; nanoseconds: number } {
   const milliseconds = Date.now()
 
@@ -285,86 +375,157 @@ function now(): { seconds: number; nanoseconds: number } {
         </div>
       </div>
 
-      <div class="grid gap-4 lg:grid-cols-2">
-        <div>
-          <h2 class="mb-2 text-lg font-semibold">
-            {{ t('gamesView.stands') }}
-          </h2>
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b border-mahjong-border text-mahjong-muted">
-                <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.player') }}</th>
-                <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.seat') }}</th>
-                <th class="px-2 py-1 text-end font-medium">{{ t('gamesView.finalScore') }}</th>
-                <th v-if="selectedPlayerId !== null" class="px-2 py-1 text-end font-medium">
-                  {{ t('gamesView.difference') }}
-                </th>
-                <th v-if="game.status === 'finalized'" class="px-2 py-1 text-end font-medium">
-                  {{ t('gamesView.position') }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="entry in standings"
-                :key="entry.playerId"
-                class="cursor-pointer border-b border-mahjong-border last:border-b-0"
-                :data-test="`standing-${entry.playerId}`"
-                @click="selectPlayer(entry.playerId)"
-              >
-                <td class="px-2 py-1">{{ nameOf(entry.playerId) }}</td>
-                <td class="px-2 py-1">{{ t(`gamesView.seats.${entry.seat}`) }}</td>
-                <td class="px-2 py-1 text-end">{{ entry.score }}</td>
-                <td
-                  v-if="selectedPlayerId !== null && entry.playerId !== selectedPlayerId"
-                  class="px-2 py-1 text-end"
-                  data-test="player-difference"
+      <div class="grid gap-4 lg:grid-cols-3">
+        <!-- Columna 1: Marcador, Fichas de riichi, Estado mano siguiente, Mesa -->
+        <div class="space-y-4">
+          <div>
+            <h2 class="mb-2 text-lg font-semibold">
+              {{ t('gamesView.stands') }}
+            </h2>
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-mahjong-border text-mahjong-muted">
+                  <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.player') }}</th>
+                  <th class="px-2 py-1 text-start font-medium">{{ t('gamesView.seat') }}</th>
+                  <th class="px-2 py-1 text-end font-medium">{{ t('gamesView.finalScore') }}</th>
+                  <th v-if="selectedPlayerId !== null" class="px-2 py-1 text-end font-medium">
+                    {{ t('gamesView.difference') }}
+                  </th>
+                  <th v-if="game.status === 'finalized'" class="px-2 py-1 text-end font-medium">
+                    {{ t('gamesView.position') }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="entry in standings"
+                  :key="entry.playerId"
+                  class="cursor-pointer border-b border-mahjong-border last:border-b-0"
+                  :data-test="`standing-${entry.playerId}`"
+                  @click="selectPlayer(entry.playerId)"
                 >
-                  {{ differenceTextOf(entry.playerId) }}
-                </td>
-                <td
-                  v-else-if="selectedPlayerId !== null && entry.playerId === selectedPlayerId"
-                  class="px-2 py-1 text-end"
-                  data-test="player-difference"
-                >
-                  0
-                </td>
-                <td v-if="entry.position !== null" class="px-2 py-1 text-end">
-                  {{ t(`uma.${entry.position}`) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <td class="px-2 py-1">{{ nameOf(entry.playerId) }}</td>
+                  <td class="px-2 py-1">{{ t(`gamesView.seats.${entry.seat}`) }}</td>
+                  <td class="px-2 py-1 text-end">{{ entry.score }}</td>
+                  <td
+                    v-if="selectedPlayerId !== null && entry.playerId !== selectedPlayerId"
+                    class="px-2 py-1 text-end"
+                    data-test="player-difference"
+                  >
+                    {{ differenceTextOf(entry.playerId) }}
+                  </td>
+                  <td
+                    v-else-if="selectedPlayerId !== null && entry.playerId === selectedPlayerId"
+                    class="px-2 py-1 text-end"
+                    data-test="player-difference"
+                  >
+                    0
+                  </td>
+                  <td v-if="entry.position !== null" class="px-2 py-1 text-end">
+                    {{ t(`uma.${entry.position}`) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-          <p class="mt-3 text-sm text-mahjong-muted">
-            {{ t('gamesView.riichiPot') }}: {{ riichiSticks }}
-          </p>
+            <p class="mt-3 text-sm text-mahjong-muted">
+              {{ t('gamesView.riichiPot') }}: {{ riichiSticks }}
+            </p>
 
-          <fieldset
-            v-if="nextHand !== null"
-            class="mt-3 flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
-            data-test="next-hand"
-          >
-            <legend class="px-1 text-mahjong-muted">
-              {{ t('turnForm.nextHand.title') }}
-            </legend>
-            <span class="flex justify-between">
-              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.roundWind') }}</span>
-              <span data-test="next-wind">{{ t(`gamesView.seats.${nextHand.wind}`) }}</span>
-            </span>
-            <span class="flex justify-between">
-              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.dealerSeat') }}</span>
-              <span data-test="next-dealer">
-                {{ dealerId === '' ? '' : seatLabel(dealerId) }}
+            <fieldset
+              v-if="nextHand !== null"
+              class="mt-3 flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
+              data-test="next-hand"
+            >
+              <legend class="px-1 text-mahjong-muted">
+                {{ t('turnForm.nextHand.title') }}
+              </legend>
+              <span class="flex justify-between">
+                <span class="text-mahjong-muted">{{ t('turnForm.nextHand.roundWind') }}</span>
+                <span data-test="next-wind">{{ t(`gamesView.seats.${nextHand.wind}`) }}</span>
               </span>
-            </span>
-            <span class="flex justify-between">
-              <span class="text-mahjong-muted">{{ t('turnForm.nextHand.honba') }}</span>
-              <span data-test="next-honba">{{ nextHand.honba }}</span>
-            </span>
-          </fieldset>
+              <span class="flex justify-between">
+                <span class="text-mahjong-muted">{{ t('turnForm.nextHand.dealerSeat') }}</span>
+                <span data-test="next-dealer">
+                  {{ dealerId === '' ? '' : seatLabel(dealerId) }}
+                </span>
+              </span>
+              <span class="flex justify-between">
+                <span class="text-mahjong-muted">{{ t('turnForm.nextHand.honba') }}</span>
+                <span data-test="next-honba">{{ nextHand.honba }}</span>
+              </span>
+            </fieldset>
+
+            <!-- Mesa -->
+            <fieldset
+              v-if="mesa.length > 0"
+              class="mt-3 rounded border border-mahjong-border bg-mahjong-surface p-3"
+              data-test="mesa"
+            >
+              <legend class="px-1 text-mahjong-muted text-sm font-medium">
+                {{ t('turnForm.mesa.title') }}
+              </legend>
+              <div class="grid grid-cols-2 gap-3">
+                <div
+                  v-for="row in mesa"
+                  :key="row.playerId"
+                  class="relative rounded border border-mahjong-border bg-mahjong-bg p-3 transition-colors"
+                  :data-test="`mesa-${row.seat}`"
+                  :class="{
+                    'ring-2 ring-mahjong-positive': row.isWinner,
+                    'ring-2 ring-mahjong-negative': row.isRonLoser,
+                  }"
+                >
+                  <div class="flex items-start justify-between gap-2 mb-2">
+                    <div class="flex items-center gap-2">
+                      <div class="w-8 h-8 rounded-full bg-mahjong-border flex items-center justify-center text-xs text-mahjong-muted">
+                        {{ row.name.charAt(0) }}
+                      </div>
+                      <span class="font-medium text-sm" data-test="mesa-name">{{ row.name }}</span>
+                    </div>
+                    <span
+                      class="px-2 py-0.5 text-xs font-medium rounded-full text-white"
+                      :class="windBadgeClass(row.seat)"
+                      data-test="mesa-wind-badge"
+                    >
+                      {{ t(`gamesView.seats.${row.seat}`) }}
+                    </span>
+                  </div>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="font-mono text-xl font-bold text-mahjong-text" data-test="mesa-score">
+                      {{ n(row.score, 'points') }}
+                    </span>
+                    <span
+                      class="font-mono text-sm"
+                      :class="row.deltaClass"
+                      data-test="mesa-delta"
+                    >
+                      {{ row.deltaText }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between mt-2">
+                    <span
+                      v-if="row.isDealer"
+                      class="px-1.5 py-0.5 text-xs rounded border border-mahjong-border text-mahjong-muted"
+                      data-test="mesa-dealer"
+                    >
+                      {{ t('turnForm.mesa.dealer') }}
+                    </span>
+                    <span
+                      v-if="row.hasRiichi"
+                      class="px-1.5 py-0.5 text-xs rounded-full bg-mahjong-accent/20 text-mahjong-accent shadow-glow-red"
+                      data-test="mesa-riichi"
+                    >
+                      {{ t('turnForm.riichi') }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+          </div>
         </div>
 
+        <!-- Columna 2: Formulario de captura -->
         <div>
           <div class="mb-2 flex items-center justify-between gap-2">
             <h2 class="text-lg font-semibold">
@@ -409,24 +570,40 @@ function now(): { seconds: number; nanoseconds: number } {
           </div>
 
           <TurnForm v-if="canCapture" :game="game" />
+        </div>
 
-          <ul
-            class="divide-y divide-mahjong-border rounded border border-mahjong-border bg-mahjong-surface"
-          >
+        <!-- Columna 3: Listado de turnos capturados -->
+        <div>
+          <div class="relative pl-4 border-l border-mahjong-border" data-test="turn-timeline">
+            <ul
+              v-if="(turns ?? []).length > 0"
+              class="divide-y divide-mahjong-border rounded border border-mahjong-border bg-mahjong-surface"
+            >
             <li
               v-for="turn in turns ?? []"
               :key="turn.turnNo"
               class="flex flex-col gap-1 px-3 py-2 text-sm"
             >
-              <span>
-                <span class="font-medium">T{{ turn.turnNo }}</span>
-                <span class="text-mahjong-muted">
-                  · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+              <div class="flex items-center justify-between">
+                <span>
+                  <span class="font-medium">T{{ turn.turnNo }}</span>
+                  <span class="text-mahjong-muted">
+                    · {{ t(`turnForm.resultTypes.${turn.resultType}`) }}
+                  </span>
+                  <span class="text-mahjong-muted">
+                    · {{ t('gamesView.capturedBy') }}: {{ turn.capturedBy }}
+                  </span>
                 </span>
-                <span class="text-mahjong-muted">
-                  · {{ t('gamesView.capturedBy') }}: {{ turn.capturedBy }}
-                </span>
-              </span>
+                <BaseButton
+                  v-if="turn.turnNo === (turns?.length ?? 0) && session.status === 'authenticated' && game.status === 'open'"
+                  :data-test="`delete-turn-${turn.turnNo}`"
+                  variant="ghost"
+                  size="sm"
+                  @click="deleteTurnNo = turn.turnNo; deleteTurnDialog = true"
+                >
+                  {{ t('gamesView.deleteTurn') }}
+                </BaseButton>
+              </div>
               <ul
                 v-if="turn.audit.length > 0"
                 class="flex flex-col gap-1 text-xs text-mahjong-muted"
@@ -452,13 +629,14 @@ function now(): { seconds: number; nanoseconds: number } {
                 </li>
               </ul>
             </li>
-            <li v-if="(turns ?? []).length === 0" class="px-3 py-4 text-sm text-mahjong-muted">
-              {{ t('gamesView.noTurns') }}
-            </li>
-          </ul>
+            </ul>
 
-          <ul
-            v-if="(game.turnAudit ?? []).length > 0"
+            <p v-if="(turns ?? []).length === 0" class="px-3 py-4 text-sm text-mahjong-muted">
+              {{ t('gamesView.noTurns') }}
+            </p>
+
+            <ul
+              v-if="(game.turnAudit ?? []).length > 0"
             class="mt-3 flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-xs text-mahjong-muted"
             data-test="game-turn-audit"
           >
@@ -469,6 +647,7 @@ function now(): { seconds: number; nanoseconds: number } {
             </li>
           </ul>
         </div>
+      </div>
       </div>
     </template>
 
@@ -518,6 +697,32 @@ function now(): { seconds: number; nanoseconds: number } {
           variant="danger"
           :disabled="abandonGame.isLoading.value"
           @click="confirmAbandon"
+        >
+          {{ t('gamesView.confirm') }}
+        </BaseButton>
+      </div>
+    </BaseDialog>
+
+    <BaseDialog
+      :open="deleteTurnDialog"
+      :title="t('gamesView.confirmDeleteTurn', { turn: deleteTurnNo })"
+      @close="deleteTurnDialog = false; deleteTurnNo = null; deleteTurnError = null"
+    >
+      <p class="mb-4 text-sm text-mahjong-muted">
+        {{ t('gamesView.confirmDeleteTurnHint') }}
+      </p>
+      <p v-if="deleteTurnError" class="mb-4 text-sm text-mahjong-negative" data-test="delete-turn-error">
+        {{ deleteTurnError }}
+      </p>
+      <div class="flex justify-end gap-2">
+        <BaseButton variant="ghost" @click="deleteTurnDialog = false; deleteTurnNo = null; deleteTurnError = null">
+          {{ t('gamesView.cancel') }}
+        </BaseButton>
+        <BaseButton
+          :data-test="`delete-turn-confirm`"
+          variant="danger"
+          :disabled="deleteTurn.isLoading.value"
+          @click="confirmDeleteTurn"
         >
           {{ t('gamesView.confirm') }}
         </BaseButton>

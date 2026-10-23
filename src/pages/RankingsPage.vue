@@ -54,12 +54,19 @@ function rankLabel(rank: number): string {
 
   return `${rank}º`
 }
+
+function rankClass(rank: number): string {
+  if (rank === 1) return 'text-mahjong-gold font-bold'
+  if (rank === 2) return 'text-silver font-semibold'
+  if (rank === 3) return 'text-amber-600 font-medium'
+  return 'text-mahjong-muted'
+}
 </script>
 
 <template>
   <section>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-xl font-semibold">
+      <h1 class="font-display text-xl font-semibold">
         {{ t('rankingsView.title') }}
       </h1>
       <label class="block max-w-xs">
@@ -96,17 +103,18 @@ function rankLabel(rank: number): string {
           v-for="entry in rankings ?? []"
           :key="entry.playerId"
           class="border-b border-mahjong-border last:border-b-0"
+          :class="entry.rank <= 3 ? 'bg-mahjong-border/20' : ''"
         >
-          <td class="px-3 py-2 text-mahjong-accent">{{ rankLabel(entry.rank) }}</td>
+          <td class="px-3 py-2" :class="rankClass(entry.rank)">{{ rankLabel(entry.rank) }}</td>
           <td class="px-3 py-2">
             <RouterLink
               :to="`/partidas?season=${String(selectedSeason)}&player=${entry.playerId}`"
-              class="text-mahjong-accent hover:underline"
+              class="text-mahjong-accent hover:underline font-medium"
             >
               {{ nameOf(entry.playerId) }}
             </RouterLink>
           </td>
-          <td class="px-3 py-2 text-end">{{ entry.points }}</td>
+          <td class="px-3 py-2 text-end font-mono">{{ entry.points }}</td>
           <td class="px-3 py-2 text-end">{{ entry.gamesPlayed }}</td>
         </tr>
       </tbody>

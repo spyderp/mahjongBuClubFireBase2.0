@@ -804,3 +804,61 @@ describe('T15 · rechazo entero', () => {
     expect(dealers).toStrictEqual([A, B, C, D, A])
   })
 })
+
+/**
+ * T03 · RF-31.6, RF-31.7 y RF-37.1. El contexto de la mano forma parte de lo que el turno guarda:
+ * un turno corregido re-deriva con el contexto **nuevo**, y el `yakuHan` guardado queda igual al
+ * que produce el recálculo.
+ *
+ * Un turno escrito antes de 004 no trae contexto: se lee igual que antes, con el `yakuHan` que ya
+ * tenía guardado (RF-37.3).
+ */
+describe('T03 · el contexto sobrevive a la re-derivación', () => {
+  const CERRADA: HandValueInput = {
+    yaku: ['pinfu'],
+    yakuHan: 1,
+    doraCount: 0,
+    fu: 30,
+    isClosedHand: true,
+    hasKan: false,
+  }
+
+  const ABIERTA: HandValueInput = { ...CERRADA, yakuHan: 0, isClosedHand: false }
+
+  it('un turno corregido cambiando el contexto re-deriva con el contexto nuevo', () => {
+    const antes = expectOk(replayTurns(PLAYERS, [tsumoTurn(1, B, { hand: CERRADA })], 1)).turns[0]
+    const despues = expectOk(replayTurns(PLAYERS, [tsumoTurn(1, B, { hand: ABIERTA })], 1)).turns[0]
+
+    expect(antes?.values[0]?.han).toBe(1)
+    expect(despues?.values[0]?.han).toBe(0)
+  })
+
+  it('el han recalculado coincide con el guardado', () => {
+    const captured = tsumoTurn(1, B, { hand: CERRADA })
+    const value = expectOk(replayTurns(PLAYERS, [captured], 1)).turns[0]?.values[0]
+
+    expect(value?.han).toBe(captured.hand.yakuHan + captured.hand.doraCount)
+  })
+
+  it('un ron múltiple re-deriva cada ganador con su propia mano', () => {
+    const captured = ronTurn(1, B, D, {
+      hand: CERRADA,
+      winners: [B, C],
+      winnerHands: [
+        { playerId: B, hand: CERRADA },
+        { playerId: C, hand: ABIERTA },
+      ],
+    })
+
+    const values = expectOk(replayTurns(PLAYERS, [captured], 1)).turns[0]?.values ?? []
+
+    expect(values.map((value) => value.han)).toStrictEqual([1, 0])
+  })
+
+  it('un turno sin contexto se lee igual que antes de 004', () => {
+    const captured = tsumoTurn(1, B, { hand: HAND_1 })
+    const value = expectOk(replayTurns(PLAYERS, [captured], 1)).turns[0]?.values[0]
+
+    expect(value?.han).toBe(HAND_1.yakuHan + HAND_1.doraCount)
+  })
+})

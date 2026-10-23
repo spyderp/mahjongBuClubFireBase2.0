@@ -112,7 +112,17 @@ describe('T76 · AppShell, AppHeader y AppNav', () => {
     expect(header.text()).not.toContain('ana@correo.es')
     expect(header.text()).not.toContain('uid-1')
 
-    await header.get('button').trigger('click')
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const signOutButtons = header.findAllComponents({ name: 'BaseButton' })
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    const signOutButton = signOutButtons.find((btn: { text: () => string }) =>
+      btn.text().includes('Cerrar sesión'),
+    )
+    expect(signOutButton).toBeDefined()
+    if (signOutButton) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      await signOutButton.trigger('click')
+    }
     expect(signOutSession).toHaveBeenCalledTimes(1)
   })
 

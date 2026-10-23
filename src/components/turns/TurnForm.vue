@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Multiselect from '@vueform/multiselect'
+import '@vueform/multiselect/themes/default.css'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
@@ -12,15 +14,15 @@ import type { TurnDraft } from '@/composables/useGameTurns'
 import { usePlayers } from '@/composables/usePlayers'
 import { DataError, ERROR_KEYS } from '@/data/errors'
 import type { CreateTurnInput, TurnRecord } from '@/data/turns.repository'
-import { validateRepresentable } from '@/domain/handValue'
-import type { HandResultType, HandValueInput } from '@/domain/handValue'
+import { sumHandYakuHan, validateRepresentable } from '@/domain/handValue'
+import type { HandResultType, HandSituation, HandValueInput } from '@/domain/handValue'
 import { isRenchan, minTurns } from '@/domain/rules'
 import type { HandOutcome } from '@/domain/rules'
 import { checkSquare, resolveTurn } from '@/domain/turn'
 import type { TurnInput, TurnPlayer, TurnResolution, TurnWinnerInput } from '@/domain/turn'
 import type { PlayerId, ResultType, Seat, Wind } from '@/domain/types'
-import { sumYakuHan, validateChiitoitsuFu, validateWindYaku, YAKU_CATALOG } from '@/domain/yaku'
-import type { YakuCondition, YakuId } from '@/domain/yaku'
+import { validateChiitoitsuFu, validateWindYaku, YAKU_CATALOG } from '@/domain/yaku'
+import type { YakuCondition, YakuHanSum, YakuId } from '@/domain/yaku'
 import type { GameRecord } from '@/data/games.repository'
 import { useSessionStore } from '@/stores/session'
 
@@ -74,12 +76,43 @@ const resultType = ref<ResultType | ''>('')
 const winnerIds = ref<PlayerId[]>([])
 const discarderId = ref<PlayerId | ''>('')
 const winnerToAdd = ref('')
-const selectedYaku = ref<YakuId[]>([])
 const yakuFilter = ref('')
-const yakuHanOverride = ref('0')
-const doraCount = ref('0')
-const fu = ref('20')
 const tenpai = ref<PlayerId[]>([])
+
+/**
+ * T07–T10 · RF-31.1, RF-31.2, RF-32.1 y RF-32.3. La mano se captura **por ganador**.
+ *
+ * `baseValues` es la mano que se está capturando: la del **primer** ganador, o la que se prepara
+ * antes de elegir ganador. Los demás ganadores la heredan —en un ron múltiple casi todas las manos
+ * se parecen— hasta que alguien la edita; en ese momento el ganador se queda con la suya.
+ *
+ * `ownValues` son las manos ya separadas: las de los ganadores que alguien ha tocado.
+ *
+ * `handContexts` es el contexto de cada ganador —si su mano está **cerrada** y si tuvo **kan**— y
+ * nunca se hereda: si una mano está abierta o tuvo kan, es de **esa** mano (RF-31.1 y RF-31.2).
+ */
+type HandValues = {
+  yaku: YakuId[]
+  yakuHanOverride: string
+  doraCount: string
+  fu: string
+}
+
+type HandContext = {
+  isClosedHand: boolean
+  hasKan: boolean
+}
+
+function newHandValues(): HandValues {
+  return { yaku: [], yakuHanOverride: '0', doraCount: '0', fu: '20' }
+}
+
+/** Los valores por defecto del contexto: mano cerrada y sin kan, que es lo que se suponía antes. */
+const DEFAULT_HAND_CONTEXT: HandContext = { isClosedHand: true, hasKan: false }
+
+const baseValues = reactive<HandValues>(newHandValues())
+const ownValues = reactive<Record<string, HandValues>>({})
+const handContexts = reactive<Record<string, HandContext>>({})
 
 const chomboId = ref<PlayerId | ''>('')
 const riichiPlayers = ref<PlayerId[]>([])
@@ -129,16 +162,186 @@ const playerNames = computed<ReadonlyMap<PlayerId, string>>(
 )
 
 /**
- * La mano tal y como la describe el formulario: lo marcado más el ajuste. Es lo que se envía a
- * `resolveTurn`, y también lo que la mesa previsualiza.
+ * El primer ganador: el que pone la mano que los demás heredan mientras nadie la edita.
  */
-function currentHand(): HandValueInput {
-  return {
-    yaku: [...selectedYaku.value],
-    yakuHan: totalHan.value,
-    doraCount: Number(doraCount.value),
-    fu: Number(fu.value),
+function firstWinnerId(): PlayerId | undefined {
+  return winnerIds.value[0]
+}
+
+/**
+ * Los valores de la mano de un ganador. Sin ganador —la mano que se prepara antes de elegirlo— son
+ * los de la mano en curso.
+ */
+function valuesOf(playerId: PlayerId | undefined): HandValues {
+  if (playerId === undefined) {
+    return baseValues
   }
+
+  return ownValues[playerId] ?? baseValues
+}
+
+/** El contexto de la mano de un ganador: cerrada y kan (RF-31.1 y RF-31.2). */
+function contextOf(playerId: PlayerId | undefined): HandContext {
+  if (playerId === undefined) {
+    return DEFAULT_HAND_CONTEXT
+  }
+
+  return handContexts[playerId] ?? DEFAULT_HAND_CONTEXT
+}
+
+/** Contexto reactivo para v-model en los checkboxes de cada ganador. */
+const winnerContext = ref<Record<string, { isClosedHand: boolean; hasKan: boolean }>>({})
+
+function updateWinnerContext(): void {
+  interface WinnerContextValue {
+    isClosedHand: boolean
+    hasKan: boolean
+  }
+  const ctx: Record<string, WinnerContextValue> = {}
+
+  for (const playerId of winnerIds.value) {
+    const context = handContexts[playerId] ?? DEFAULT_HAND_CONTEXT
+
+    // Creamos un objeto reactivo individual para cada ganador
+    // Esto permite que v-model funcione correctamente con getters/setters
+    const playerContext = reactive({
+      _isClosedHand: context.isClosedHand,
+      _hasKan: context.hasKan,
+      get isClosedHand() {
+        return this._isClosedHand
+      },
+      set isClosedHand(v: boolean) {
+        this._isClosedHand = v
+        context.isClosedHand = v
+      },
+      get hasKan() {
+        return this._hasKan
+      },
+      set hasKan(v: boolean) {
+        this._hasKan = v
+        context.hasKan = v
+      },
+    })
+
+    ctx[playerId] = playerContext
+  }
+
+  winnerContext.value = ctx
+}
+
+// Actualizar el contexto cuando cambien los ganadores
+watch(winnerIds, updateWinnerContext, { immediate: true, deep: true })
+
+/** Helper para acceder al contexto de forma segura sin optional chaining en v-model. */
+function winnerCtx(playerId: PlayerId | undefined): { isClosedHand: boolean; hasKan: boolean } {
+  if (!playerId) return { isClosedHand: true, hasKan: false }
+  return winnerContext.value[playerId] ?? { isClosedHand: true, hasKan: false }
+}
+
+/** La clave de un panel de mano: el asiento del ganador, que es como se habla de él en la mesa. */
+function panelKey(playerId: PlayerId | undefined): string {
+  if (playerId === undefined) {
+    return 'base'
+  }
+
+  return seatOf(playerId) ?? playerId
+}
+
+/**
+ * Los paneles de mano que se pintan: el del **primer** ganador —o el de la mano en curso, antes de
+ * elegir ganador— y el de cada uno de los demás (RF-32.1).
+ */
+const handPanels = computed<readonly { key: string; playerId: PlayerId | undefined }[]>(() => {
+  const first = firstWinnerId()
+  const panels: { key: string; playerId: PlayerId | undefined }[] = [
+    { key: panelKey(first), playerId: first },
+  ]
+
+  for (const playerId of winnerIds.value.slice(1)) {
+    panels.push({ key: panelKey(playerId), playerId })
+  }
+
+  return panels
+})
+
+/**
+ * Separa la mano de un ganador de la del primero (RF-32.1).
+ *
+ * A partir de aquí sus yaku, su ajuste, sus dora y sus fu son los suyos: los demás ya no los
+ * heredan y editarlos no le cambia la mano a nadie.
+ */
+function detachValues(playerId: PlayerId): void {
+  if (playerId === firstWinnerId() || ownValues[playerId] !== undefined) {
+    return
+  }
+
+  ownValues[playerId] = {
+    yaku: [...baseValues.yaku],
+    yakuHanOverride: baseValues.yakuHanOverride,
+    doraCount: baseValues.doraCount,
+    fu: baseValues.fu,
+  }
+}
+
+/**
+ * La situación de la mano en curso: lo que **no** depende del ganador (RF-31.5). El resultado, si
+ * alguien declaró riichi y si la mano es la primera o la última son de la partida, no de la mano.
+ */
+function situationOf(): HandSituation {
+  return {
+    resultType: (isWin.value ? resultType.value : 'ryuukyoku') as ResultType,
+    hasRiichiDeclared: riichiPlayers.value.length > 0,
+    isFirstHand: turnNo.value === 1,
+    isFinalHand: false,
+  }
+}
+
+/** Los datos de la mano de un ganador que no dependen del total. */
+function handShapeOf(playerId: PlayerId | undefined): HandValueInput {
+  const values = valuesOf(playerId)
+  const context = contextOf(playerId)
+
+  return {
+    yaku: [...values.yaku],
+    yakuHan: 0,
+    doraCount: Number(values.doraCount),
+    fu: Number(values.fu),
+    isClosedHand: context.isClosedHand,
+    hasKan: context.hasKan,
+    yakuHanOverride: Number(values.yakuHanOverride),
+  }
+}
+
+/**
+ * El desglose de yaku de la mano de un ganador, con el contexto de **ese** ganador (RF-31.3 y
+ * RF-31.4). La lógica de señalar qué yaku no cuenta ya vive en `domain/yaku.ts`: aquí solo se le
+ * pasa el contexto que se ha capturado.
+ */
+function yakuSumOf(playerId: PlayerId | undefined): YakuHanSum {
+  return sumHandYakuHan(handShapeOf(playerId), situationOf())
+}
+
+/** La suma del catálogo de la mano de un ganador: lo que cuentan sus yaku (RF-22.1). */
+function catalogHanOf(playerId: PlayerId | undefined): number {
+  return yakuSumOf(playerId).han
+}
+
+/** El ajuste a mano de los han de un ganador, como delta sobre su catálogo (RF-22.9). */
+function overrideDeltaOf(playerId: PlayerId | undefined): number {
+  return Number(valuesOf(playerId).yakuHanOverride)
+}
+
+/** El total de la mano de un ganador: su catálogo más su ajuste. */
+function totalHanOf(playerId: PlayerId | undefined): number {
+  return catalogHanOf(playerId) + overrideDeltaOf(playerId)
+}
+
+/**
+ * La mano de un ganador tal y como la describe el formulario: lo marcado más el ajuste, con su
+ * contexto. Es lo que se envía a `resolveTurn`, y también lo que la mesa previsualiza.
+ */
+function handOf(playerId: PlayerId | undefined): HandValueInput {
+  return { ...handShapeOf(playerId), yakuHan: totalHanOf(playerId) }
 }
 
 /**
@@ -162,6 +365,11 @@ function currentTurnInput(): TurnInput | null {
     honba: honba.value,
     riichiDeclaredBy: [...riichiPlayers.value],
     riichiSticksBefore: riichiSticksBefore.value,
+    /**
+     * RF-31.5: si esta es la primera mano de la partida. Lo necesitan los yaku que solo cuentan en
+     * la primera (`tenhou`, `chiihou`, `suuchaRiichi`).
+     */
+    isFirstHand: turnNo.value === 1,
   }
 
   if (isWin.value) {
@@ -169,10 +377,13 @@ function currentTurnInput(): TurnInput | null {
       return null
     }
 
-    const hand = currentHand()
+    /**
+     * RF-32.1: cada ganador lleva **su** mano. En un ron múltiple no son la misma, y usar una sola
+     * era justo lo que el motor no podía expresar.
+     */
     const winners: readonly TurnWinnerInput[] = winnerIds.value.map((playerId) => ({
       playerId,
-      hand,
+      hand: handOf(playerId),
     }))
 
     if (resultType.value === 'ron') {
@@ -240,6 +451,12 @@ type MesaRow = {
   readonly deltaClass: string
   /** La localía **real** del turno que se está capturando, no el asiento Este (RF-24.3). */
   readonly isDealer: boolean
+  /** Si el jugador es el ganador de la mano que se está capturando. */
+  readonly isWinner: boolean
+  /** Si el jugador es el perdedor por ron (el descartador). */
+  readonly isRonLoser: boolean
+  /** Si el jugador ha declarado riichi en esta mano. */
+  readonly hasRiichi: boolean
 }
 
 /**
@@ -256,8 +473,11 @@ type MesaRow = {
  * Mientras el turno no se pueda resolver no hay diferencia que pintar, y la mesa no inventa ninguna:
  * todos los ceros salen sin color (casos límite 1 y 2).
  */
-const mesa = computed<readonly MesaRow[]>(() =>
-  players.value.map((player) => {
+const mesa = computed<readonly MesaRow[]>(() => {
+  const winners = isWin.value ? winnerIds.value : []
+  const discarder = resultType.value === 'ron' ? discarderId.value : ''
+
+  return players.value.map((player) => {
     const delta = currentDeltas.value.get(player.playerId) ?? 0
 
     return {
@@ -270,9 +490,12 @@ const mesa = computed<readonly MesaRow[]>(() =>
       deltaText: delta > 0 ? `+${n(delta, 'points')}` : n(delta, 'points'),
       deltaClass: deltaClassOf(delta),
       isDealer: player.playerId === dealerId.value,
+      isWinner: winners.includes(player.playerId),
+      isRonLoser: player.playerId === discarder,
+      hasRiichi: riichiPlayers.value.includes(player.playerId),
     }
-  }),
-)
+  })
+})
 
 /**
  * RF-24.2: el color sale de los **tokens del tema** —`--color-mahjong-positive` y
@@ -290,6 +513,19 @@ function deltaClassOf(delta: number): string {
   }
 
   return ''
+}
+
+function windBadgeClass(seat: Seat): string {
+  switch (seat) {
+    case 'east':
+      return 'bg-mahjong-east'
+    case 'south':
+      return 'bg-mahjong-south'
+    case 'west':
+      return 'bg-mahjong-west'
+    case 'north':
+      return 'bg-mahjong-north'
+  }
 }
 
 const playerOptions = computed<readonly SelectOption[]>(() =>
@@ -317,9 +553,26 @@ const yakuOptions = computed<readonly SelectOption[]>(() =>
  * «chanta» medio en inglés: recorrerlos a ojo para marcar cuatro yaku es el trabajo que el
  * requisito viene a quitar.
  *
+ * RF-34.4: cada yaku se muestra como «japonés (inglés)», así que el nombre va en la etiqueta; y el
+ * identificador —la forma romanizada que el club ya usaba— también se busca, para que escribir
+ * «haitei» siga encontrando a la última entrega.
+ *
  * Filtra **la lista**, nunca la captura: lo marcado sigue en `selectedYaku` aunque no se vea, así que
  * un filtro sin coincidencia no puede hacer perder lo que ya había. Por eso el total del catálogo no
  * se mueve al escribir.
+ */
+/**
+ * RF-25.1: el buscador deja solo las entradas cuyo nombre **contiene** lo escrito, sin distinguir
+ * mayúsculas ni espacios alrededor. El catálogo son 46 nombres y quien captura busca «riic» o
+ * «chanta» medio en inglés: recorrerlos a ojo para marcar cuatro yaku es el trabajo que el
+ * requisito viene a quitar.
+ *
+ * RF-34.4: cada yaku se muestra como «japonés (inglés)», así que el nombre va en la etiqueta; y el
+ * identificador —la forma romanizada que el club ya usaba— también se busca, para que escribir
+ * «haitei» siga encontrando a la última entrega.
+ *
+ * Búsqueda flexible: divide el término en palabras y verifica que TODAS estén presentes (en cualquier
+ * orden). Así "seven pair" encuentra "Seven Pairs", "pair seven" también, etc.
  */
 const visibleYakuOptions = computed<readonly SelectOption[]>(() => {
   const needle = yakuFilter.value.trim().toLowerCase()
@@ -328,7 +581,14 @@ const visibleYakuOptions = computed<readonly SelectOption[]>(() => {
     return yakuOptions.value
   }
 
-  return yakuOptions.value.filter((option) => option.label.toLowerCase().includes(needle))
+  // Dividir en palabras y filtrar vacíos
+  const words = needle.split(/\s+/).filter((w) => w.length > 0)
+
+  return yakuOptions.value.filter((option) => {
+    const haystack = `${option.label}`.toLowerCase()
+    // TODAS las palabras deben estar presentes (en cualquier orden)
+    return words.every((word) => haystack.includes(word))
+  })
 })
 
 const isWin = computed(() => resultType.value === 'tsumo' || resultType.value === 'ron')
@@ -336,35 +596,18 @@ const isDraw = computed(() => resultType.value === 'ryuukyoku')
 const isChombo = computed(() => resultType.value === 'chombo')
 
 /**
- * RF-22.2: el contexto que decide qué yaku cuentan. La captura no modela mano abierta ni kan —eso
- * es 004, «verificación de la mano»—, así que la mano se supone cerrada y sin kan, que es lo que
- * quiere decir un jugador que no marca lo contrario.
- */
-const yakuContext = computed(() => ({
-  resultType: (isWin.value ? resultType.value : 'ryuukyoku') as ResultType,
-  isClosedHand: true,
-  hasRiichiDeclared: riichiPlayers.value.length > 0,
-  hasKan: false,
-  isFirstHand: turnNo.value === 1,
-  isFinalHand: false,
-}))
-
-/** RF-22.1: el total sale del catálogo. El ajuste es un delta aparte, no un segundo total. */
-const yakuSum = computed(() => sumYakuHan(selectedYaku.value, yakuContext.value))
-const catalogHan = computed(() => yakuSum.value.han)
-const overrideDelta = computed(() => Number(yakuHanOverride.value))
-const totalHan = computed(() => catalogHan.value + overrideDelta.value)
-
-/**
  * RF-21.2: un ganador no puede ser el descartador ni al revés. Las dos listas se recortan con la
  * otra, así que la opción problemática **no aparece** y no se puede llegar a ella desde la interfaz.
+ *
+ * En tsumo no hay descartador, así que el filtro por descartador solo se aplica en ron.
  */
 const winnerOptions = computed<readonly SelectOption[]>(() =>
   table.value
-    .filter(
-      (player) =>
-        !winnerIds.value.includes(player.playerId) && player.playerId !== discarderId.value,
-    )
+    .filter((player) => {
+      const alreadyWinner = winnerIds.value.includes(player.playerId)
+      const isDiscarderInRon = resultType.value === 'ron' && player.playerId === discarderId.value
+      return !alreadyWinner && !isDiscarderInRon
+    })
     .map((player) => ({
       value: player.playerId,
       label: playerLabel(player.playerId),
@@ -402,22 +645,65 @@ function isNonNegativeInteger(raw: string): boolean {
 }
 
 /**
+ * Lo que le falta a la mano de un ganador, o `null` si está bien.
+ *
  * RF-22.8: el disparador del rechazo es **no haber marcado ningún yaku**. Ni los dora ni el ajuste
  * lo sustituyen, que es justo lo que evita que el ajuste se convierta en una puerta trasera.
+ *
+ * Las comprobaciones son **por ganador** (RF-32.1): cada uno se mira con sus yaku, sus fu y su
+ * contexto, y el yaku de viento se valida contra el asiento de ese ganador y no contra el del
+ * primero.
  */
-function handFieldsComplete(): boolean {
-  return (
-    selectedYaku.value.length > 0 &&
-    isNonNegativeInteger(doraCount.value) &&
-    isNonNegativeInteger(fu.value)
-  )
+function handErrorOf(playerId: PlayerId): string | null {
+  const values = valuesOf(playerId)
+
+  if (values.yaku.length === 0) {
+    return 'noYaku'
+  }
+
+  if (!isNonNegativeInteger(values.doraCount) || !isNonNegativeInteger(values.fu)) {
+    return 'handFieldsRequired'
+  }
+
+  const seat = seatOf(playerId)
+
+  if (seat === undefined) {
+    return 'resultRequired'
+  }
+
+  const windCheck = validateWindYaku(values.yaku, {
+    seat,
+    roundWind: roundWind.value,
+  })
+
+  if (!windCheck.ok) {
+    return 'windYaku'
+  }
+
+  const fuCheck = validateChiitoitsuFu(Number(values.fu), values.yaku.includes('chiitoitsu'))
+
+  if (!fuCheck.ok) {
+    return 'chiiFu'
+  }
+
+  const representable = validateRepresentable({
+    han: catalogHanOf(playerId) + Number(values.doraCount),
+    fu: Number(values.fu),
+    resultType: resultType.value as HandResultType,
+  })
+
+  if (!representable.ok) {
+    return 'notRepresentable'
+  }
+
+  return null
 }
 
-function toggleIn(list: PlayerId[], playerId: PlayerId): void {
-  const index = list.indexOf(playerId)
+function toggleIn<T>(list: T[], item: T): void {
+  const index = list.indexOf(item)
 
   if (index === -1) {
-    list.push(playerId)
+    list.push(item)
 
     return
   }
@@ -425,57 +711,50 @@ function toggleIn(list: PlayerId[], playerId: PlayerId): void {
   list.splice(index, 1)
 }
 
-function toggleYaku(id: YakuId): void {
-  const index = selectedYaku.value.indexOf(id)
-
-  if (index === -1) {
-    selectedYaku.value.push(id)
-
-    return
+/**
+ * Marcar un yaku en la mano de un ganador (RF-32.1). Editar la mano de un ganador que heredaba la
+ * del primero lo separa de ella: a partir de ahí la suya es la suya.
+ */
+function toggleYaku(playerId: PlayerId | undefined, id: YakuId): void {
+  if (playerId !== undefined) {
+    detachValues(playerId)
   }
 
-  selectedYaku.value.splice(index, 1)
+  if (valuesOf(playerId).yaku.includes(id)) {
+    valuesOf(playerId).yaku = valuesOf(playerId).yaku.filter((item) => item !== id)
+  } else {
+    valuesOf(playerId).yaku = [...valuesOf(playerId).yaku, id]
+  }
+}
+void toggleYaku
+void conditionLabel
+
+/** Asigna la lista de yaku de un ganador (RF-35.5). */
+function setYakuList(playerId: PlayerId | undefined, value: unknown): void {
+  if (playerId !== undefined) {
+    detachValues(playerId)
+  }
+
+  if (Array.isArray(value)) {
+    valuesOf(playerId).yaku = value.filter((item): item is YakuId => typeof item === 'string')
+  } else {
+    valuesOf(playerId).yaku = []
+  }
+}
+function setHandValue(
+  playerId: PlayerId | undefined,
+  field: 'yakuHanOverride' | 'doraCount' | 'fu',
+  value: string,
+): void {
+  if (playerId !== undefined) {
+    detachValues(playerId)
+  }
+
+  valuesOf(playerId)[field] = value
 }
 
 function seatOf(playerId: PlayerId): Seat | undefined {
   return table.value.find((player) => player.playerId === playerId)?.seat
-}
-
-/**
- * Viento que le corresponde a un asiento según la localía: el repartidor es Este y los
- * demás se reparten en sentido antihorario (sur, oeste, norte) desde su posición.
- */
-function windOfSeatRelativeToDealer(
-  seat: Seat | undefined,
-  dealerSeat: Seat | undefined,
-): Seat | undefined {
-  if (seat === undefined || dealerSeat === undefined) {
-    return undefined
-  }
-
-  const seatMap: Record<Seat, number> = {
-    east: 0,
-    south: 1,
-    west: 2,
-    north: 3,
-  }
-
-  const seats: Seat[] = ['east', 'south', 'west', 'north']
-
-  const seatIndex = seatMap[seat]
-  const dealerSeatIndex = seatMap[dealerSeat]
-
-  // Distancia modular antihoraria (el +4 evita índices negativos)
-  const windIndex = (seatIndex - dealerSeatIndex + 4) % 4
-
-  return seats[windIndex]
-}
-
-/** Etiqueta traducida del viento de un asiento; cae al propio asiento si no hay localía. */
-function windLabel(seat: Seat): string {
-  const dealerSeat = dealerId.value === '' ? undefined : seatOf(dealerId.value)
-  const wind = windOfSeatRelativeToDealer(seat, dealerSeat)
-  return t(`gamesView.seats.${wind ?? seat}`)
 }
 
 /**
@@ -511,12 +790,69 @@ function addWinner(): void {
     return
   }
 
+  // UX: si el ganador elegido era el descartador, limpiamos el descartador
+  // (un jugador no puede ser a la vez ganador y descartador en un ron)
+  if (resultType.value === 'ron' && discarderId.value === candidate) {
+    discarderId.value = ''
+  }
+
   winnerIds.value.push(candidate)
   winnerToAdd.value = ''
+
+  /**
+   * El contexto del ganador nuevo es el de siempre: mano cerrada y sin kan (RF-31.1 y RF-31.2).
+   * Sus valores no se tocan: hereda la mano que pone el primero hasta que alguien la edite.
+   */
+  handContexts[candidate] = { ...DEFAULT_HAND_CONTEXT }
 }
 
+/**
+ * Quitar un ganador del ron.
+ *
+ * Si el que se va era el primero —el que ponía la mano que los demás heredaban— los que quedan se
+ * quedan con la suya y el nuevo primero pone la suya. Perder el enlace es lo que evita que quitar
+ * a un ganador le cambie la mano a otro por detrás.
+ */
 function removeWinner(playerId: PlayerId): void {
+  const wasFirst = firstWinnerId() === playerId
+
   toggleIn(winnerIds.value, playerId)
+  delete handContexts[playerId]
+  delete ownValues[playerId]
+
+  if (!wasFirst) {
+    return
+  }
+
+  const next = firstWinnerId()
+
+  if (next === undefined) {
+    baseValues.yaku = []
+    baseValues.yakuHanOverride = '0'
+    baseValues.doraCount = '0'
+    baseValues.fu = '20'
+
+    return
+  }
+
+  const nextValues = ownValues[next] ?? baseValues
+
+  for (const other of winnerIds.value) {
+    if (other !== next && ownValues[other] === undefined) {
+      ownValues[other] = {
+        yaku: [...baseValues.yaku],
+        yakuHanOverride: baseValues.yakuHanOverride,
+        doraCount: baseValues.doraCount,
+        fu: baseValues.fu,
+      }
+    }
+  }
+
+  baseValues.yaku = [...nextValues.yaku]
+  baseValues.yakuHanOverride = nextValues.yakuHanOverride
+  baseValues.doraCount = nextValues.doraCount
+  baseValues.fu = nextValues.fu
+  delete ownValues[next]
 }
 
 /**
@@ -574,46 +910,17 @@ async function handleSubmit(): Promise<void> {
       return
     }
 
-    if (!handFieldsComplete()) {
-      errors.field = selectedYaku.value.length === 0 ? 'noYaku' : 'handFieldsRequired'
-      return
-    }
+    /**
+     * RF-32.1: la mano se comprueba **ganador a ganador**. En un ron múltiple cada uno puede tener
+     * yaku, fu y dora distintos, y el primero que falle es el que se avisa.
+     */
+    for (const winner of winnerIds.value) {
+      const handError = handErrorOf(winner)
 
-    const firstWinner = winnerIds.value[0]
-    const winnerSeat = firstWinner === undefined ? undefined : seatOf(firstWinner)
-
-    if (winnerSeat === undefined) {
-      errors.field = 'resultRequired'
-      return
-    }
-
-    const windCheck = validateWindYaku(selectedYaku.value, {
-      seat: winnerSeat,
-      roundWind: roundWind.value,
-    })
-
-    if (!windCheck.ok) {
-      errors.field = 'windYaku'
-      return
-    }
-
-    const hasChiitoitsu = selectedYaku.value.includes('chiitoitsu')
-    const fuCheck = validateChiitoitsuFu(Number(fu.value), hasChiitoitsu)
-
-    if (!fuCheck.ok) {
-      errors.field = 'chiiFu'
-      return
-    }
-
-    const representable = validateRepresentable({
-      han: catalogHan.value + Number(doraCount.value),
-      fu: Number(fu.value),
-      resultType: resultType.value as HandResultType,
-    })
-
-    if (!representable.ok) {
-      errors.field = 'notRepresentable'
-      return
+      if (handError !== null) {
+        errors.field = handError
+        return
+      }
     }
 
     /**
@@ -697,6 +1004,7 @@ function handOutcome(): HandOutcome {
 
 async function persist(resolution: TurnResolution): Promise<void> {
   const capturedBy = session.user?.id ?? ''
+  const first = firstWinnerId()
 
   const input: CreateTurnInput = {
     turnNo: turnNo.value,
@@ -704,11 +1012,15 @@ async function persist(resolution: TurnResolution): Promise<void> {
     dealerId: dealerId.value as PlayerId,
     honba: honba.value,
     resultType: resultType.value as ResultType,
-    yaku: isWin.value ? [...selectedYaku.value] : [],
-    yakuHan: isWin.value ? catalogHan.value : 0,
-    yakuHanOverride: isWin.value ? Number(yakuHanOverride.value) : 0,
-    doraCount: isWin.value ? Number(doraCount.value) : 0,
-    fu: isWin.value ? Number(fu.value) : 0,
+    /**
+     * Los campos del turno son los de **siempre** (RF-32.2): los del primer ganador. El desglose
+     * de cada uno, cuando hay más de un ganador, va aparte.
+     */
+    yaku: isWin.value ? [...baseValues.yaku] : [],
+    yakuHan: isWin.value ? catalogHanOf(first) : 0,
+    yakuHanOverride: isWin.value ? overrideDeltaOf(first) : 0,
+    doraCount: isWin.value ? Number(baseValues.doraCount) : 0,
+    fu: isWin.value ? Number(baseValues.fu) : 0,
     tenpai: isDraw.value ? [...tenpai.value] : [],
     riichiDeclaredBy: [...riichiPlayers.value],
     riichiSticks: resolution.riichiSticks,
@@ -724,6 +1036,35 @@ async function persist(resolution: TurnResolution): Promise<void> {
     capturedBy,
     isRenchan: isRenchan(handOutcome()),
     isFinalTurn: turnNo.value >= minTurns(props.game.gameLength),
+    /**
+     * RF-31.7: el contexto de cada ganador forma parte de lo que el turno guarda. Sin él, un
+     * turno no se puede volver a derivar: no se sabría si su mano estaba abierta o tuvo kan.
+     */
+    ...(isWin.value
+      ? {
+          handContext: winnerIds.value.map((playerId) => ({
+            playerId,
+            isClosedHand: contextOf(playerId).isClosedHand,
+            hasKan: contextOf(playerId).hasKan,
+          })),
+        }
+      : {}),
+    /**
+     * RF-32.1 y RF-32.2: el desglose por ganador solo existe en un ron múltiple. Con un solo
+     * ganador —o en un tsumo— el turno sigue guardando los campos de siempre.
+     */
+    ...(isWin.value && winnerIds.value.length > 1
+      ? {
+          winnerHands: winnerIds.value.map((playerId) => ({
+            playerId,
+            yaku: [...valuesOf(playerId).yaku],
+            yakuHan: catalogHanOf(playerId),
+            yakuHanOverride: overrideDeltaOf(playerId),
+            doraCount: Number(valuesOf(playerId).doraCount),
+            fu: Number(valuesOf(playerId).fu),
+          })),
+        }
+      : {}),
   }
 
   try {
@@ -748,21 +1089,30 @@ function resetForm(): void {
   winnerIds.value = []
   winnerToAdd.value = ''
   discarderId.value = ''
-  selectedYaku.value = []
   yakuFilter.value = ''
-  yakuHanOverride.value = '0'
-  doraCount.value = '0'
-  fu.value = '20'
+  baseValues.yaku = []
+  baseValues.yakuHanOverride = '0'
+  baseValues.doraCount = '0'
+  baseValues.fu = '20'
   tenpai.value = []
   chomboId.value = ''
   riichiPlayers.value = []
+
+  for (const playerId of Object.keys(ownValues)) {
+    delete ownValues[playerId]
+  }
+
+  for (const playerId of Object.keys(handContexts)) {
+    delete handContexts[playerId]
+  }
 }
 
 /** Los parámetros del mensaje del rechazo: qué turno lo provoca (RF-18.16). */
 const errorDetails = ref<Readonly<Record<string, string>>>({})
 
 function conditionLabel(condition: YakuCondition): string {
-  return t(`turnForm.conditions.${condition.kind}`)
+  void condition
+  return ''
 }
 
 /** Un borrador viene de `localStorage` y no tiene tipo: se estrecha lista a lista y sin adivinar. */
@@ -774,19 +1124,43 @@ function yakuIdsOf(raw: unknown): YakuId[] {
   return Array.isArray(raw) ? raw.filter((id): id is YakuId => typeof id === 'string') : []
 }
 
-/** RF-15.8: el borrador se guarda con cada cambio y se restaura al montar. */
+/**
+ * RF-15.8: el borrador se guarda con cada cambio y se restaura al montar.
+ *
+ * Los campos sueltos son los de **siempre** —los de la mano en curso— y las manos por ganador van
+ * aparte, en `hands`. Un borrador escrito antes de 004 solo tiene los campos sueltos: sus ganadores
+ * heredan esa mano, que es lo que se guardaba entonces.
+ */
 function draftOf(): TurnDraft {
+  const hands: Record<string, unknown> = {}
+
+  for (const playerId of winnerIds.value) {
+    const values = valuesOf(playerId)
+
+    hands[playerId] = {
+      yaku: [...values.yaku],
+      yakuHanOverride: values.yakuHanOverride,
+      doraCount: values.doraCount,
+      fu: values.fu,
+      isClosedHand: contextOf(playerId).isClosedHand,
+      hasKan: contextOf(playerId).hasKan,
+      /** Si sus valores siguen siendo los de la mano en curso: entonces los hereda. */
+      linked: ownValues[playerId] === undefined,
+    }
+  }
+
   return {
     resultType: resultType.value,
     winnerIds: [...winnerIds.value],
     discarderId: discarderId.value,
-    selectedYaku: [...selectedYaku.value],
-    yakuHanOverride: yakuHanOverride.value,
-    doraCount: doraCount.value,
-    fu: fu.value,
+    selectedYaku: [...baseValues.yaku],
+    yakuHanOverride: baseValues.yakuHanOverride,
+    doraCount: baseValues.doraCount,
+    fu: baseValues.fu,
     tenpai: [...tenpai.value],
     chomboId: chomboId.value,
     riichiPlayers: [...riichiPlayers.value],
+    hands,
   }
 }
 
@@ -816,17 +1190,14 @@ function restoreDraft(): void {
   if (typeof draft.discarderId === 'string') {
     discarderId.value = draft.discarderId as PlayerId
   }
-  if (Array.isArray(draft.selectedYaku)) {
-    selectedYaku.value = yakuIdsOf(draft.selectedYaku)
-  }
   if (typeof draft.yakuHanOverride === 'string') {
-    yakuHanOverride.value = draft.yakuHanOverride
+    baseValues.yakuHanOverride = draft.yakuHanOverride
   }
   if (typeof draft.doraCount === 'string') {
-    doraCount.value = draft.doraCount
+    baseValues.doraCount = draft.doraCount
   }
   if (typeof draft.fu === 'string') {
-    fu.value = draft.fu
+    baseValues.fu = draft.fu
   }
   if (Array.isArray(draft.tenpai)) {
     tenpai.value = playerIdsOf(draft.tenpai)
@@ -836,6 +1207,53 @@ function restoreDraft(): void {
   }
   if (Array.isArray(draft.riichiPlayers)) {
     riichiPlayers.value = playerIdsOf(draft.riichiPlayers)
+  }
+
+  restoreHands(draft)
+}
+
+/**
+ * Las manos por ganador del borrador (RF-31.1, RF-31.2 y RF-32.1).
+ *
+ * Un borrador escrito antes de 004 solo tiene los campos sueltos de la mano en curso: sus
+ * ganadores la heredan, que es como se guardaba entonces. Uno escrito después trae `hands`, con la
+ * mano de cada ganador y su contexto.
+ */
+function restoreHands(draft: TurnDraft): void {
+  const raw = draft.hands
+  const hands = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+  const first = firstWinnerId()
+
+  baseValues.yaku = yakuIdsOf(draft.selectedYaku)
+
+  for (const playerId of winnerIds.value) {
+    const stored = hands[playerId]
+    const own =
+      typeof stored === 'object' && stored !== null
+        ? (stored as Record<string, unknown>)
+        : undefined
+
+    handContexts[playerId] = {
+      isClosedHand: own === undefined ? true : own.isClosedHand !== false,
+      hasKan: own === undefined ? false : own.hasKan === true,
+    }
+
+    /**
+     * Los que heredaban la mano en curso la vuelven a heredar; los que la tenían separada la
+     * recuperan como suya.
+     */
+    const linked = own === undefined || own.linked === true
+
+    if (linked || playerId === first) {
+      continue
+    }
+
+    ownValues[playerId] = {
+      yaku: yakuIdsOf(own?.yaku),
+      yakuHanOverride: typeof own?.yakuHanOverride === 'string' ? own.yakuHanOverride : '0',
+      doraCount: typeof own?.doraCount === 'string' ? own.doraCount : '0',
+      fu: typeof own?.fu === 'string' ? own.fu : '20',
+    }
   }
 }
 
@@ -868,7 +1286,7 @@ function handleCancel(): void {
 <template>
   <form class="flex flex-col gap-3" @submit.prevent="handleSubmit">
     <div class="flex items-center justify-between gap-2">
-      <h2 class="text-lg font-semibold">
+      <h2 class="font-display text-lg font-semibold">
         {{ t('turnForm.title') }}
       </h2>
       <div class="flex gap-2">
@@ -910,43 +1328,64 @@ function handleCancel(): void {
       </span>
     </fieldset>
 
-    <fieldset
-      class="flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
-      data-test="mesa"
-    >
-      <legend class="px-1 text-mahjong-muted">
+    <fieldset class="rounded border border-mahjong-border bg-mahjong-surface p-3" data-test="mesa">
+      <legend class="px-1 text-mahjong-muted text-sm font-medium">
         {{ t('turnForm.mesa.title') }}
       </legend>
-      <span
-        v-for="row in mesa"
-        :key="row.playerId"
-        class="flex items-center justify-between gap-2"
-        :data-test="`mesa-${row.seat}`"
-      >
-        <span class="flex items-center gap-2">
-          <span class="text-xs text-mahjong-muted" data-test="mesa-wind">
-            {{ t('turnForm.mesa.windOfHand', { wind: t(`gamesView.seats.${row.wind}`) }) }}
-          </span>
-          <span data-test="mesa-name">{{ row.name }}</span>
-          <span class="text-xs text-mahjong-muted" data-test="mesa-seat">
-            {{ t(`gamesView.seats.${row.seat}`) }}
-          </span>
-          <span class="text-xs text-mahjong-muted" data-test="mesa-seat-wind">
-            ({{ windLabel(row.seat) }})
-          </span>
-          <span
-            v-if="row.isDealer"
-            class="rounded border border-mahjong-border px-1 text-xs"
-            data-test="mesa-dealer"
-          >
-            {{ t('turnForm.mesa.dealer') }}
-          </span>
-        </span>
-        <span class="flex items-baseline gap-2">
-          <span data-test="mesa-score">{{ n(row.score, 'points') }}</span>
-          <span :class="row.deltaClass" data-test="mesa-delta">{{ row.deltaText }}</span>
-        </span>
-      </span>
+      <div class="grid grid-cols-2 gap-3">
+        <div
+          v-for="row in mesa"
+          :key="row.playerId"
+          class="relative rounded border border-mahjong-border bg-mahjong-bg p-3 transition-colors"
+          :data-test="`mesa-${row.seat}`"
+          :class="{
+            'ring-2 ring-mahjong-positive': row.isWinner,
+            'ring-2 ring-mahjong-negative': row.isRonLoser,
+          }"
+        >
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2">
+              <div
+                class="w-8 h-8 rounded-full bg-mahjong-border flex items-center justify-center text-xs text-mahjong-muted"
+              >
+                {{ row.name.charAt(0) }}
+              </div>
+              <span class="font-medium text-sm" data-test="mesa-name">{{ row.name }}</span>
+            </div>
+            <span
+              class="px-2 py-0.5 text-xs font-medium rounded-full text-white"
+              :class="windBadgeClass(row.seat)"
+              data-test="mesa-wind-badge"
+            >
+              {{ t(`gamesView.seats.${row.seat}`) }}
+            </span>
+          </div>
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="font-mono text-xl font-bold text-mahjong-text" data-test="mesa-score">
+              {{ n(row.score, 'points') }}
+            </span>
+            <span class="font-mono text-sm" :class="row.deltaClass" data-test="mesa-delta">
+              {{ row.deltaText }}
+            </span>
+          </div>
+          <div class="flex items-center justify-between mt-2">
+            <span
+              v-if="row.isDealer"
+              class="px-1.5 py-0.5 text-xs rounded border border-mahjong-border text-mahjong-muted"
+              data-test="mesa-dealer"
+            >
+              {{ t('turnForm.mesa.dealer') }}
+            </span>
+            <span
+              v-if="row.hasRiichi"
+              class="px-1.5 py-0.5 text-xs rounded-full bg-mahjong-accent/20 text-mahjong-accent shadow-glow-red"
+              data-test="mesa-riichi"
+            >
+              {{ t('turnForm.riichi') }}
+            </span>
+          </div>
+        </div>
+      </div>
     </fieldset>
 
     <div class="grid grid-cols-2 gap-3">
@@ -1010,73 +1449,133 @@ function handleCancel(): void {
 
       <div class="flex flex-col gap-1 text-sm">
         <span class="text-mahjong-muted">{{ t('turnForm.yaku') }}</span>
-        <BaseInput v-model="yakuFilter" name="yakuFilter" :placeholder="t('turnForm.yakuFilter')" />
-        <div class="flex flex-col gap-1" data-test="yaku-options">
-          <label
-            v-for="option in visibleYakuOptions"
-            :key="option.value"
-            class="flex items-center gap-2 text-xs"
-          >
-            <input
-              type="checkbox"
-              :checked="selectedYaku.includes(option.value as YakuId)"
-              :value="option.value"
-              @change="toggleYaku(option.value as YakuId)"
-            />
-            <span>{{ option.label }}</span>
-          </label>
-        </div>
-        <p
-          v-if="visibleYakuOptions.length === 0"
-          class="text-xs text-mahjong-muted"
-          data-test="yaku-no-results"
-        >
-          {{ t('turnForm.yakuNoResults') }}
-        </p>
       </div>
 
-      <div class="flex flex-col gap-1 text-sm">
-        <label class="flex flex-col gap-1">
-          <span>{{ t('turnForm.yakuHanOverride') }}</span>
-          <BaseInput v-model="yakuHanOverride" name="yakuHanOverride" type="number" />
+      <fieldset
+        v-for="panel in handPanels"
+        :key="panel.key"
+        class="flex flex-col gap-1 rounded border border-mahjong-border px-3 py-2 text-sm"
+        :data-test="`hand-${panel.key}`"
+      >
+        <legend class="px-1 text-mahjong-muted">
+          {{
+            panel.playerId === undefined ? t('turnForm.hand.pending') : playerLabel(panel.playerId)
+          }}
+        </legend>
+
+        <label class="flex items-center gap-2">
+          <input
+            v-model="winnerCtx(panel.playerId).isClosedHand"
+            type="checkbox"
+            :data-test="`hand-${panel.key}-closed`"
+          />
+          <span>{{ t('turnForm.hand.closedHand') }}</span>
         </label>
-        <span class="flex justify-between" data-test="han-total">
-          <span class="text-mahjong-muted">{{ t('turnForm.catalogTotal') }}</span>
-          <span>{{ totalHan }}</span>
-        </span>
-        <p
-          v-if="overrideDelta !== 0"
-          class="text-xs text-mahjong-warning"
-          data-test="override-notice"
-        >
-          {{ t('turnForm.overrideNotice', { delta: overrideDelta }) }}
-        </p>
-        <ul class="flex flex-col gap-0 text-xs text-mahjong-muted" data-test="han-breakdown">
-          <li v-for="entry in yakuSum.breakdown" :key="entry.id">
-            {{ t(`yaku.${entry.id}`) }} · {{ entry.han }}
-            {{
-              entry.reason === 'counted'
-                ? ''
-                : entry.reason === 'limit'
-                  ? t('turnForm.reasons.limit')
-                  : t('turnForm.reasons.notCounted')
-            }}
-            <span v-if="entry.unmet.length > 0">
-              ({{ entry.unmet.map(conditionLabel).join(', ') }})
-            </span>
-          </li>
-        </ul>
-      </div>
 
-      <label class="flex flex-col gap-1 text-sm">
-        <span>{{ t('turnForm.dora') }}</span>
-        <BaseInput v-model="doraCount" name="doraCount" type="number" />
-      </label>
+        <label class="flex items-center gap-2">
+          <input
+            v-model="winnerCtx(panel.playerId).hasKan"
+            type="checkbox"
+            :data-test="`hand-${panel.key}-kan`"
+          />
+          <span>{{ t('turnForm.hand.hasKan') }}</span>
+        </label>
 
-      <label class="flex flex-col gap-1 text-sm">
-        <span>{{ t('turnForm.fu') }}</span>
-        <BaseInput v-model="fu" name="fu" type="number" />
-      </label>
+        <div class="flex flex-col gap-1" data-test="yaku-options">
+          <Multiselect
+            :model-value="valuesOf(panel.playerId).yaku"
+            :options="visibleYakuOptions"
+            mode="tags"
+            :searchable="true"
+            :internal-search="false"
+            :search-term="yakuFilter"
+            :close-on-select="false"
+            :create-tag="false"
+            :can-clear="true"
+            :hide-selected="false"
+            track-by="value"
+            label="label"
+            value-prop="value"
+            class="multiselect-mahjong"
+            @update:model-value="(val: unknown) => setYakuList(panel.playerId, val)"
+            @search-change="(q: string) => (yakuFilter = q ?? '')"
+          />
+          <div class="hidden">
+            <label
+              v-for="option in visibleYakuOptions"
+              :key="option.value"
+              class="flex items-center gap-2 text-xs"
+            >
+              <input
+                type="checkbox"
+                :checked="valuesOf(panel.playerId).yaku.includes(option.value as YakuId)"
+                :value="option.value"
+                @change="toggleYaku(panel.playerId, option.value as YakuId)"
+              />
+              <span>{{ option.label }}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <span class="flex justify-between" data-test="han-total">
+            <span class="text-mahjong-muted">{{ t('turnForm.catalogTotal') }}</span>
+            <span>{{ catalogHanOf(panel.playerId) + overrideDeltaOf(panel.playerId) }}</span>
+          </span>
+          <p
+            v-if="overrideDeltaOf(panel.playerId) !== 0"
+            class="text-xs text-mahjong-warning"
+            data-test="override-notice"
+          >
+            {{ t('turnForm.overrideNotice', { delta: overrideDeltaOf(panel.playerId) }) }}
+          </p>
+          <ul class="flex flex-col gap-0 text-xs text-mahjong-muted" data-test="han-breakdown">
+            <li v-for="entry in yakuSumOf(panel.playerId).breakdown" :key="entry.id">
+              {{ t(`yaku.${entry.id}`) }} · {{ entry.han }}
+              {{
+                entry.reason === 'counted'
+                  ? ''
+                  : entry.reason === 'limit'
+                    ? t('turnForm.reasons.limit')
+                    : t('turnForm.reasons.notCounted')
+              }}
+              <span v-if="entry.unmet && entry.unmet.length > 0">
+                ({{ entry.unmet.map((c: any) => t(`turnForm.conditions.${c.kind}`)).join(', ') }})
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <label class="flex flex-col gap-1 text-sm">
+          <span>{{ t('turnForm.yakuHanOverride') }}</span>
+          <BaseInput
+            :model-value="valuesOf(panel.playerId).yakuHanOverride"
+            name="yakuHanOverride"
+            type="number"
+            @update:model-value="setHandValue(panel.playerId, 'yakuHanOverride', $event)"
+          />
+        </label>
+
+        <label class="flex flex-col gap-1">
+          <span>{{ t('turnForm.dora') }}</span>
+          <BaseInput
+            :model-value="valuesOf(panel.playerId).doraCount"
+            name="doraCount"
+            type="number"
+            @update:model-value="setHandValue(panel.playerId, 'doraCount', $event)"
+          />
+        </label>
+
+        <label class="flex flex-col gap-1">
+          <span>{{ t('turnForm.fu') }}</span>
+          <BaseInput
+            :model-value="valuesOf(panel.playerId).fu"
+            name="fu"
+            type="number"
+            @update:model-value="setHandValue(panel.playerId, 'fu', $event)"
+          />
+        </label>
+      </fieldset>
     </template>
 
     <fieldset v-else-if="isDraw" class="flex flex-col gap-1 text-sm" data-test="tenpai">
@@ -1138,3 +1637,91 @@ function handleCancel(): void {
     <ScoreTableModal :open="scoreTableOpen" @close="scoreTableOpen = false" />
   </form>
 </template>
+
+<style scoped>
+/* Fix @vueform/multiselect colors for dark theme - force dark backgrounds and proper contrast */
+.multiselect-mahjong.multiselect {
+  background-color: var(--color-mahjong-bg) !important;
+  border-color: var(--color-mahjong-border) !important;
+  color: var(--color-mahjong-text) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-input) {
+  color: var(--color-mahjong-text) !important;
+  background-color: transparent !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-single) {
+  color: var(--color-mahjong-text) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-placeholder) {
+  color: var(--color-mahjong-muted) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-option) {
+  color: var(--color-mahjong-text) !important;
+  background-color: var(--color-mahjong-surface) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-option.is-pointed) {
+  background-color: var(--color-mahjong-border) !important;
+  color: var(--color-mahjong-text) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-option.is-selected) {
+  background-color: var(--color-mahjong-accent) !important;
+  color: var(--color-mahjong-bg) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-tag) {
+  background-color: var(--color-mahjong-accent) !important;
+  color: var(--color-mahjong-bg) !important;
+  border-color: var(--color-mahjong-accent) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-tag-remove) {
+  color: var(--color-mahjong-bg) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-clear) {
+  color: var(--color-mahjong-muted) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-clear:hover) {
+  color: var(--color-mahjong-text) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-spinner) {
+  border-color: var(--color-mahjong-muted) !important;
+  border-top-color: var(--color-mahjong-accent) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect-dropdown) {
+  background-color: var(--color-mahjong-surface) !important;
+  border-color: var(--color-mahjong-border) !important;
+  box-shadow: var(--shadow-glow-blue) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect__search-input) {
+  color: var(--color-mahjong-text) !important;
+  background-color: var(--color-mahjong-bg) !important;
+  border-color: var(--color-mahjong-border) !important;
+}
+
+.multiselect-mahjong :deep(.multiselect__search-input::placeholder) {
+  color: var(--color-mahjong-muted) !important;
+}
+
+/* Ensure the search wrapper also has dark background */
+.multiselect-mahjong :deep(.multiselect__search) {
+  background-color: var(--color-mahjong-bg) !important;
+  border-color: var(--color-mahjong-border) !important;
+}
+
+/* Selected values container */
+.multiselect-mahjong :deep(.multiselect__select) {
+  background-color: var(--color-mahjong-bg) !important;
+  border-color: var(--color-mahjong-border) !important;
+}
+</style>

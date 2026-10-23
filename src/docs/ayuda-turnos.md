@@ -7,6 +7,7 @@ Esta ayuda explica, paso a paso, cómo capturar un turno de una partida.
 2. **Elige el resultado.** Tsumo, ron, empate (ryuukyoku) o chombo. El formulario cambia según lo
    que elijas.
 3. **Marca el riichi.** Cada jugador que declare riichi en esta mano marca su casilla.
-4. **Añade los yaku.** Escribe para filtrar la lista, marca los que cuente la mano y ajusta el han
-   si hace falta.
+4. **Añade los yaku.** Cada yaku se muestra con su nombre japonés y su nombre en inglés entre
+   paréntesis (por ejemplo, `断幺九 (Tanyao)`). Escribe para filtrar la lista —puedes buscar por
+   cualquiera de los dos nombres—, marca los que cuente la mano y ajusta el han si hace falta.
 5. **Guarda.** Si algo no cuadra, el formulario dice qué campo lo impide y no guarda nada.

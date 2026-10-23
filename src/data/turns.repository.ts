@@ -67,6 +67,37 @@ export type TurnAuditEntry = TurnCorrectEntry | TurnDeleteEntry
  */
 export type TurnSnapshot = Omit<TurnRecord, 'audit' | 'createdAt' | 'updatedBy' | 'updatedAt'>
 
+/**
+ * El contexto de la mano de **un** ganador (RF-31.7): si la mano estaba abierta o cerrada y si tuvo
+ * kan.
+ *
+ * Opcional en el documento porque los turnos escritos antes de `specs/004` no lo tienen: se leen
+ * como antes, sin contexto, y no se re-puntúan (RF-37.2 y RF-37.3).
+ */
+export type WinnerHandContext = {
+  readonly playerId: PlayerId
+  readonly isClosedHand: boolean
+  readonly hasKan: boolean
+}
+
+/**
+ * El desglose de la mano de **un** ganador (RF-32.1): sus yaku, su han de yaku, su ajuste a mano, su
+ * número de dora y sus fu.
+ *
+ * Solo existe en un ron múltiple (RF-32.2): un turno con un solo ganador, o un tsumo, sigue
+ * guardando el desglose con la forma de siempre, en los campos del turno.
+ *
+ * Opcional en el documento porque los turnos escritos antes de `specs/004` no lo tienen (RF-37.2).
+ */
+export type WinnerHandBreakdown = {
+  readonly playerId: PlayerId
+  readonly yaku: readonly YakuId[]
+  readonly yakuHan: number
+  readonly yakuHanOverride: number
+  readonly doraCount: number
+  readonly fu: number
+}
+
 export type TurnRecord = {
   readonly turnNo: number
   readonly wind: Wind
@@ -106,6 +137,20 @@ export type TurnRecord = {
   readonly updatedAt: DomainTimestamp | null
   readonly isRenchan: boolean
   readonly isFinalTurn: boolean
+  /**
+   * El contexto de la mano de cada ganador (RF-31.7).
+   *
+   * Opcional porque los turnos escritos antes de `specs/004` no lo tienen: se leen como antes, sin
+   * contexto, y no se re-puntúan (RF-37.2 y RF-37.3).
+   */
+  readonly handContext?: readonly WinnerHandContext[]
+  /**
+   * El desglose de la mano de cada ganador (RF-32.1).
+   *
+   * Solo lo tiene un ron múltiple (RF-32.2), y es opcional porque los turnos escritos antes de
+   * `specs/004` no lo tienen (RF-37.2).
+   */
+  readonly winnerHands?: readonly WinnerHandBreakdown[]
   readonly audit: readonly TurnAuditEntry[]
   readonly createdAt: DomainTimestamp
 }
@@ -131,6 +176,10 @@ export type UpdateTurnPatch = {
   readonly chomboId?: PlayerId | null
   readonly isRenchan?: boolean
   readonly isFinalTurn?: boolean
+  /** Opcional: los turnos escritos antes de `specs/004` no lo tienen (RF-37.2). */
+  readonly handContext?: readonly WinnerHandContext[]
+  /** Opcional: los turnos escritos antes de `specs/004` no lo tienen (RF-37.2). */
+  readonly winnerHands?: readonly WinnerHandBreakdown[]
 }
 
 /**
@@ -157,6 +206,8 @@ export const TURN_PATCH_FIELDS = [
   'chomboId',
   'isRenchan',
   'isFinalTurn',
+  'handContext',
+  'winnerHands',
 ] as const satisfies readonly (keyof UpdateTurnPatch)[]
 
 export type UpdateTurnPatchField = (typeof TURN_PATCH_FIELDS)[number]
@@ -228,6 +279,10 @@ type TurnData = {
   readonly updatedAt?: DomainTimestamp
   readonly isRenchan: boolean
   readonly isFinalTurn: boolean
+  /** Opcional porque los turnos escritos antes de `specs/004` no lo tienen (RF-37.2). */
+  readonly handContext?: readonly WinnerHandContext[]
+  /** Opcional porque los turnos escritos antes de `specs/004` no lo tienen (RF-37.2). */
+  readonly winnerHands?: readonly WinnerHandBreakdown[]
   /** Opcional porque los turnos escritos antes de `specs/002` no lo tienen. */
   readonly audit?: readonly TurnAuditEntry[]
   readonly createdAt: DomainTimestamp
@@ -428,6 +483,9 @@ export function capturedTurnOf(record: TurnRecord, patch: UpdateTurnPatch = {}):
   const yakuHan = patch.yakuHan ?? record.yakuHan
   const doraCount = patch.doraCount ?? record.doraCount
   const fu = patch.fu ?? record.fu
+  const handContext = patch.handContext ?? record.handContext
+  const winnerHands = patch.winnerHands ?? record.winnerHands
+  const yakuHanOverride = patch.yakuHanOverride ?? record.yakuHanOverride
 
   /**
    * T44 · Los ganadores son **captura**, no estado derivado: `CapturedTurn` los lleva aparte de
@@ -441,16 +499,76 @@ export function capturedTurnOf(record: TurnRecord, patch: UpdateTurnPatch = {}):
    */
   const winners = (patch.value ?? record.value).map((entry) => entry.playerId)
 
+  /**
+   * RF-31.7: el contexto de la mano viaja a la captura para que el recorrido vuelva a contar los
+   * yaku con el mismo contexto con el que se capturaron. La mano del turno es la del **primer**
+   * ganador (RF-32.2), así que su contexto es el de ese ganador.
+   *
+   * Sin contexto —un turno escrito antes de `specs/004`— la mano conserva su forma de siempre y no
+   * se le añade ni el ajuste ni los dos campos nuevos: los turnos antiguos no se re-puntúan
+   * (RF-37.3).
+   */
+  const context = contextOf(handContext, winners[0])
+  const hand = {
+    yaku,
+    yakuHan,
+    doraCount,
+    fu,
+    ...(context.isClosedHand === undefined && context.hasKan === undefined
+      ? {}
+      : { ...context, yakuHanOverride }),
+  }
+
   return {
     turnNo: record.turnNo,
     resultType: patch.resultType ?? record.resultType,
-    hand: { yaku, yakuHan, doraCount, fu },
+    hand,
+    /**
+     * RF-32.1: el desglose por ganador solo existe en un ron múltiple, y solo se proyecta cuando el
+     * turno lo trae. Un turno que no lo tiene no gana un campo vacío: se queda con la forma que
+     * tenía (RF-32.5).
+     */
+    ...(winnerHands === undefined
+      ? {}
+      : {
+          winnerHands: winnerHands.map((breakdown) => ({
+            playerId: breakdown.playerId,
+            hand: {
+              yaku: breakdown.yaku,
+              yakuHan: breakdown.yakuHan,
+              yakuHanOverride: breakdown.yakuHanOverride,
+              doraCount: breakdown.doraCount,
+              fu: breakdown.fu,
+              ...contextOf(handContext, breakdown.playerId),
+            },
+          })),
+        }),
     winners,
     discarderId: patch.discarderId !== undefined ? patch.discarderId : record.discarderId,
     chomboId: patch.chomboId !== undefined ? patch.chomboId : record.chomboId,
     tenpai: patch.tenpai ?? record.tenpai,
     riichiDeclaredBy: patch.riichiDeclaredBy ?? record.riichiDeclaredBy,
   }
+}
+
+/**
+ * El contexto de la mano de un ganador, o el que no hay si ese turno no lo trae (RF-37.3).
+ */
+function contextOf(
+  contexts: readonly WinnerHandContext[] | undefined,
+  playerId: PlayerId | undefined,
+): { readonly isClosedHand?: boolean; readonly hasKan?: boolean } {
+  if (contexts === undefined || playerId === undefined) {
+    return {}
+  }
+
+  const context = contexts.find((entry) => entry.playerId === playerId)
+
+  if (context === undefined) {
+    return {}
+  }
+
+  return { isClosedHand: context.isClosedHand, hasKan: context.hasKan }
 }
 
 /** Los valores de un turno sin su registro: lo que deja el borrado de ese turno (RF-19.6). */
@@ -519,11 +637,34 @@ export function capturedFieldsBefore(record: TurnRecord): Readonly<Partial<Updat
   }
 
   const previous: Partial<Record<UpdateTurnPatchField, unknown>> = {}
+  const perWinner = new Map<UpdateTurnPatchField, TurnAuditChange[]>()
 
   for (const change of last.changes) {
-    if (!isDerivedTurnField(change.field)) {
-      previous[change.field] = change.from
+    if (isDerivedTurnField(change.field)) {
+      continue
     }
+
+    /**
+     * RF-32.4: un cambio por ganador se reconoce como tal. Los cambios de un mismo campo por
+     * ganador se juntan para rehacer el campo entero, ganador a ganador.
+     */
+    if (playerIdOf(change.to) !== undefined || playerIdOf(change.from) !== undefined) {
+      const changes = perWinner.get(change.field) ?? []
+      changes.push(change)
+      perWinner.set(change.field, changes)
+      continue
+    }
+
+    previous[change.field] = change.from
+  }
+
+  /**
+   * Los campos por ganador se rehacen desde el valor **actual**: a cada ganador cambiado se le
+   * devuelve el valor que tenía, y el que no ha cambiado se queda como está. Así lo que sale es el
+   * desglose de antes de la corrección, ganador a ganador.
+   */
+  for (const [field, changes] of perWinner) {
+    previous[field] = previousWinners(record, field, changes)
   }
 
   /**
@@ -533,6 +674,34 @@ export function capturedFieldsBefore(record: TurnRecord): Readonly<Partial<Updat
    * mismo campo del documento. El cast va en la salida, una vez, y no en la firma.
    */
   return previous as Partial<UpdateTurnPatch>
+}
+
+/**
+ * El valor que tenía un campo por ganador antes de la corrección (RF-32.4).
+ */
+function previousWinners(
+  record: TurnRecord,
+  field: UpdateTurnPatchField,
+  changes: readonly TurnAuditChange[],
+): unknown {
+  const restored = byWinner(record[field])
+
+  for (const change of changes) {
+    const playerId = playerIdOf(change.to) ?? playerIdOf(change.from)
+
+    if (playerId === undefined) {
+      continue
+    }
+
+    if (change.from === undefined) {
+      restored.delete(playerId)
+      continue
+    }
+
+    restored.set(playerId, change.from)
+  }
+
+  return [...restored.values()]
 }
 
 function toRecord(snapshot: QueryDocumentSnapshot): TurnRecord {
@@ -582,7 +751,27 @@ function changesOf(
   for (const field of TURN_PATCH_FIELDS) {
     const next = patch[field]
 
-    if (next === undefined || isSameValue(stored[field], next)) {
+    if (next === undefined) {
+      continue
+    }
+
+    /**
+     * RF-32.4: el contexto y el desglose son **por ganador**, así que se auditan ganador a
+     * ganador: corregir la mano de un ganador no cuenta como corregir la de los demás.
+     *
+     * Si el valor no es una lista de ganadores no hay nada por ganador que decir, y el campo se
+     * audita como cualquier otro.
+     */
+    if (field === 'handContext' || field === 'winnerHands') {
+      const perWinner = winnerChangesOf(field, stored[field], next, derived.includes(field))
+
+      if (perWinner !== undefined) {
+        changes.push(...perWinner)
+        continue
+      }
+    }
+
+    if (isSameValue(stored[field], next)) {
       continue
     }
 
@@ -590,6 +779,82 @@ function changesOf(
   }
 
   return changes
+}
+
+/**
+ * Los cambios de un campo **por ganador** (RF-32.4): una entrada por ganador cambiado.
+ *
+ * La entrada lleva el valor de **ese** ganador —su desglose o su contexto—, no el del campo entero:
+ * así se ve qué ganador cambió y los demás no cuentan como cambiados. El ganador se reconoce por el
+ * `playerId` que lleva el propio valor, que es lo que permite rehacer el campo después.
+ */
+function winnerChangesOf(
+  field: 'handContext' | 'winnerHands',
+  stored: unknown,
+  next: unknown,
+  derived: boolean,
+): readonly TurnAuditChange[] | undefined {
+  const changes: TurnAuditChange[] = []
+  const before = byWinner(stored)
+  const after = byWinner(next)
+
+  if (before.size === 0 && after.size === 0) {
+    return undefined
+  }
+
+  for (const [playerId, value] of after) {
+    const previous = before.get(playerId)
+
+    if (previous !== undefined && isSameValue(previous, value)) {
+      continue
+    }
+
+    changes.push({ field, from: previous, to: value, derived })
+  }
+
+  for (const [playerId, previous] of before) {
+    if (!after.has(playerId)) {
+      changes.push({ field, from: previous, to: undefined, derived })
+    }
+  }
+
+  return changes
+}
+
+/**
+ * Un campo por ganador, indexado por jugador. Lo que no es de esta forma —un turno antiguo sin el
+ * campo, o un campo que no es por ganador— no tiene ganador y se queda vacío.
+ */
+function byWinner(value: unknown): Map<PlayerId, unknown> {
+  const entries = new Map<PlayerId, unknown>()
+
+  if (!Array.isArray(value)) {
+    return entries
+  }
+
+  for (const entry of value as readonly unknown[]) {
+    const playerId = playerIdOf(entry)
+
+    if (playerId !== undefined) {
+      entries.set(playerId, entry)
+    }
+  }
+
+  return entries
+}
+
+/**
+ * El ganador de un valor por ganador, si lo tiene (RF-32.4). El campo entero es una lista de
+ * ganadores y no tiene `playerId`; un ganador es uno con el suyo.
+ */
+function playerIdOf(value: unknown): PlayerId | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+
+  const candidate = (value as { readonly playerId?: unknown }).playerId
+
+  return typeof candidate === 'string' ? (candidate as PlayerId) : undefined
 }
 
 /**
@@ -625,6 +890,9 @@ function mergePatch(
   patch: UpdateTurnPatch,
   turnNo: number,
 ): Omit<TurnRecord, 'audit' | 'createdAt' | 'updatedAt' | 'updatedBy'> {
+  const handContext = patch.handContext ?? stored.handContext
+  const winnerHands = patch.winnerHands ?? stored.winnerHands
+
   return {
     turnNo,
     wind: patch.wind ?? stored.wind,
@@ -646,6 +914,12 @@ function mergePatch(
     capturedBy: stored.capturedBy,
     isRenchan: patch.isRenchan ?? stored.isRenchan,
     isFinalTurn: patch.isFinalTurn ?? stored.isFinalTurn,
+    /**
+     * Los campos nuevos solo se escriben cuando los hay: un turno anterior a `specs/004` no los
+     * tiene y no se los inventa (RF-37.2 y RF-37.3).
+     */
+    ...(handContext === undefined ? {} : { handContext }),
+    ...(winnerHands === undefined ? {} : { winnerHands }),
   }
 }
 

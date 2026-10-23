@@ -383,11 +383,17 @@ function winningHands(turns: readonly TurnRecord[]): readonly WinningHand[] {
     }
 
     for (const value of turn.value) {
+      /**
+       * RF-32.1: en un ron múltiple cada ganador tiene **su** desglose. Sin él, los yaku y las dora
+       * del turno son los del primer ganador y se le atribuirían a los demás.
+       */
+      const breakdown = turn.winnerHands?.find((entry) => entry.playerId === value.playerId)
+
       hands.push({
         playerId: value.playerId,
         resultType: turn.resultType,
-        yaku: turn.yaku,
-        doraCount: turn.doraCount,
+        yaku: breakdown?.yaku ?? turn.yaku,
+        doraCount: breakdown?.doraCount ?? turn.doraCount,
         han: value.han,
       })
     }

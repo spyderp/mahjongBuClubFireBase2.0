@@ -8,7 +8,10 @@ import {
   tsumoPayment,
   validateRepresentable,
 } from '@/domain/handValue'
-import type { HandValue, TsumoPayment } from '@/domain/handValue'
+import type { HandValue, HandValueInput, TsumoPayment } from '@/domain/handValue'
+import { resolveTurn } from '@/domain/turn'
+import type { TurnResolution } from '@/domain/turn'
+import { toPlayerId } from '@/domain/types'
 import type { YakuId } from '@/domain/yaku'
 
 function value(
@@ -468,5 +471,101 @@ describe('T23 · determinismo del resultado', () => {
     expect(validateRepresentable({ resultType: 'ron', fu: 20, han: 1 })).toStrictEqual(
       validateRepresentable({ han: 1, fu: 20, resultType: 'ron' }),
     )
+  })
+})
+
+/**
+ * T04 · RF-32.1 y RF-32.3. Un ron con dos ganadores lleva **una mano por ganador** —su yaku, su
+ * `yakuHan`, su ajuste, sus dora y sus fu— y el motor reparte según cada desglose. El ajuste es un
+ * delta por ganador sobre la suma del catálogo de **ese** ganador (RF-31.6).
+ */
+describe('T04 · el desglose por ganador en el motor', () => {
+  const A = toPlayerId('a')
+  const B = toPlayerId('b')
+  const C = toPlayerId('c')
+  const D = toPlayerId('d')
+
+  /** El desglose capturado de un ganador: siempre trae su ajuste, aunque sea cero. */
+  type Breakdown = HandValueInput & { readonly yakuHanOverride: number }
+
+  /** 2 han de yaku + 1 dora = 3 han 40 fu. */
+  const DESGLOSE_B: Breakdown = {
+    yaku: ['tanyao', 'riichi'],
+    yakuHan: 2,
+    yakuHanOverride: 0,
+    doraCount: 1,
+    fu: 40,
+    isClosedHand: true,
+    hasKan: false,
+  }
+
+  /** 1 han de yaku + 1 de ajuste = 2 han 30 fu. */
+  const DESGLOSE_C: Breakdown = {
+    yaku: ['tanyao'],
+    yakuHan: 1,
+    yakuHanOverride: 1,
+    doraCount: 0,
+    fu: 30,
+    isClosedHand: true,
+    hasKan: false,
+  }
+
+  function ronMultiple(): TurnResolution {
+    const result = resolveTurn({
+      resultType: 'ron',
+      discarderId: D,
+      winners: [
+        { playerId: B, hand: DESGLOSE_B },
+        { playerId: C, hand: DESGLOSE_C },
+      ],
+      players: [
+        { playerId: A, seat: 'east', score: 25000 },
+        { playerId: B, seat: 'south', score: 25000 },
+        { playerId: C, seat: 'west', score: 25000 },
+        { playerId: D, seat: 'north', score: 25000 },
+      ],
+      dealerId: A,
+      honba: 0,
+      riichiDeclaredBy: [B],
+      riichiSticksBefore: 0,
+    })
+
+    if (!result.ok) {
+      throw new Error(`ron rechazado inesperadamente: ${result.reason}`)
+    }
+
+    return result.resolution
+  }
+
+  it('el reparto del motor coincide con los dos desgloses capturados', () => {
+    const resolution = ronMultiple()
+
+    expect(
+      resolution.values.map((entry) => ({ han: entry.han, fu: entry.fu, points: entry.points })),
+    ).toStrictEqual([
+      { han: 3, fu: 40, points: 5200 },
+      { han: 2, fu: 30, points: 2000 },
+    ])
+  })
+
+  it('el ajuste de un ganador no toca el han del otro', () => {
+    const resolution = ronMultiple()
+
+    expect(resolution.values[0]?.han).toBe(
+      DESGLOSE_B.yakuHan + DESGLOSE_B.yakuHanOverride + DESGLOSE_B.doraCount,
+    )
+    expect(resolution.values[1]?.han).toBe(
+      DESGLOSE_C.yakuHan + DESGLOSE_C.yakuHanOverride + DESGLOSE_C.doraCount,
+    )
+  })
+
+  it('el descartador paga la suma de los dos desgloses', () => {
+    const resolution = ronMultiple()
+
+    expect(resolution.deltas).toStrictEqual([
+      { playerId: B, delta: 5200 },
+      { playerId: C, delta: 2000 },
+      { playerId: D, delta: -7200 },
+    ])
   })
 })

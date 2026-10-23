@@ -5,6 +5,7 @@ import type { DataErrorCode } from '@/data/errors'
 import { ERROR_KEYS } from '@/data/errors'
 import catalogo from '@/i18n/locales/es'
 import type { MessageCatalog } from '@/i18n/locales/es'
+import { YAKU_CATALOG } from '@/domain/yaku'
 import { MARKER, markerMessages } from '@/test-utils/i18n'
 
 const BASE = join(import.meta.dirname, '..', 'components')
@@ -76,6 +77,40 @@ describe('T72 · catálogo i18n (es)', () => {
     expect(markerMessages().errors.turn.noYaku).toBe(MARKER)
     expect(catalogo.errors.turn.notSquare).toBeTypeOf('string')
     expect(MARKER).toBe('◦')
+  })
+
+  /**
+   * T14 · RF-34.1, RF-34.2 y RF-34.3. Cada yaku del catálogo se muestra como «japonés (inglés)» y
+   * el nombre en inglés vive **solo** en el catálogo de traducciones: ni en el catálogo de yaku del
+   * dominio ni en ningún componente.
+   */
+  it('los cuarenta y nueve yaku muestran su nombre japonés con el inglés entre paréntesis', () => {
+    const ids = YAKU_CATALOG.map((definition) => definition.id)
+
+    expect(ids).toHaveLength(49)
+
+    for (const id of ids) {
+      const label = catalogo.yaku[id]
+
+      expect(label, `sin nombre: ${id}`).toBeTypeOf('string')
+      expect(label, `sin inglés: ${id}`).toMatch(/^.+ \([^()]+\)$/)
+    }
+  })
+
+  it('el nombre en inglés de cada yaku vive solo en el catálogo de traducciones', async () => {
+    for (const id of YAKU_CATALOG.map((definition) => definition.id)) {
+      expect(englishNameOf(catalogo.yaku[id]).length, `sin inglés: ${id}`).toBeGreaterThan(0)
+    }
+
+    for (const file of await filesOutsideTheCatalog()) {
+      const source = withoutComments(await readFile(file, 'utf8'))
+
+      for (const id of YAKU_CATALOG.map((definition) => definition.id)) {
+        expect(source, `${tailOf(file)} repite el inglés de ${id}`).not.toMatch(
+          wordPattern(englishNameOf(catalogo.yaku[id])),
+        )
+      }
+    }
   })
 })
 
@@ -187,6 +222,60 @@ function expectAllLeavesAreText(catalog: MessageCatalog): void {
   forEachLeaf(catalog, (value) => {
     expect(typeof value).toBe('string')
   })
+}
+
+/** El nombre en inglés de un yaku: lo que va entre paréntesis en su etiqueta. */
+function englishNameOf(label: string): string {
+  return label.match(/\(([^()]+)\)$/)?.[1] ?? ''
+}
+
+/**
+ * RF-34.2 · Los ficheros donde el nombre en inglés **no** puede estar: todo el dominio y todos los
+ * `.vue`. El catálogo de traducciones queda fuera porque es el sitio donde sí vive.
+ */
+async function filesOutsideTheCatalog(): Promise<string[]> {
+  const root = join(import.meta.dirname, '..')
+  const result: string[] = []
+
+  async function walk(dir: string, accept: (name: string) => boolean): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+
+      if (entry.isDirectory()) {
+        await walk(path, accept)
+        continue
+      }
+
+      if (accept(entry.name)) {
+        result.push(path)
+      }
+    }
+  }
+
+  await walk(join(root, 'domain'), (name) => name.endsWith('.ts'))
+  await walk(root, (name) => name.endsWith('.vue'))
+
+  return result
+}
+
+/**
+ * El código sin sus comentarios: lo que se compila, no lo que se explica. Un comentario del dominio
+ * puede nombrar el yaku en romaji (`hasPinfu`), pero eso no se pinta en ninguna pantalla.
+ */
+function withoutComments(source: string): string {
+  return source
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
+}
+
+/**
+ * El nombre suelto: ni dentro de otro nombre ni dentro de un identificador. La comparación distingue
+ * mayúsculas porque el nombre en inglés se **escribe** como se muestra, mientras que el código solo
+ * usa el identificador (`riichi`, `turnForm.riichi`), que es otra cosa.
+ */
+function wordPattern(text: string): RegExp {
+  return new RegExp(`\\b${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
 }
 
 /** El mensaje que hay en `catalogo` bajo una ruta con puntos, sea del tamaño que sea. */

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
+import BaseCard from '@/components/ui/BaseCard.vue'
 import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
@@ -64,55 +65,67 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <template>
-  <section class="max-w-xl">
-    <h1 class="text-xl font-semibold">
-      {{ t('loginView.title') }}
-    </h1>
-
-    <p class="mt-2 text-mahjong-text">
-      {{ t('loginView.description') }}
-    </p>
-
-    <form class="mt-4 flex flex-col gap-3" @submit.prevent="handleSubmit">
-      <label class="flex flex-col gap-1 text-sm">
-        <span>{{ t('loginView.email') }}</span>
-        <BaseInput
-          v-model="email"
-          name="email"
-          type="email"
-          autocomplete="email"
-          :disabled="session.pending"
-        />
-      </label>
-
-      <label class="flex flex-col gap-1 text-sm">
-        <span>{{ t('loginView.password') }}</span>
-        <BaseInput
-          v-model="password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          :disabled="session.pending"
-        />
-      </label>
-
-      <p v-if="errorKey !== null" role="alert" class="text-sm text-mahjong-negative">
-        {{ t(errorKey) }}
+  <section class="max-w-md mx-auto">
+    <div class="text-center mb-6">
+      <h1 class="font-display text-2xl font-semibold text-mahjong-text">
+        {{ t('loginView.title') }}
+      </h1>
+      <p class="mt-2 text-mahjong-muted">
+        {{ t('loginView.description') }}
       </p>
+    </div>
 
-      <div class="flex items-center gap-3">
-        <BaseButton type="submit" :disabled="session.pending">
-          {{ session.pending ? t('loginView.submitting') : t('loginView.submit') }}
-        </BaseButton>
+    <BaseCard>
+      <form class="flex flex-col gap-4" @submit.prevent="handleSubmit">
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="text-mahjong-muted">{{ t('loginView.email') }}</span>
+          <BaseInput
+            v-model="email"
+            name="email"
+            type="email"
+            autocomplete="email"
+            :disabled="session.pending"
+          />
+        </label>
 
-        <RouterLink to="/partidas" class="text-sm text-mahjong-accent">
-          {{ t('loginView.backToGames') }}
-        </RouterLink>
-      </div>
-    </form>
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="text-mahjong-muted">{{ t('loginView.password') }}</span>
+          <BaseInput
+            v-model="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            :disabled="session.pending"
+          />
+        </label>
 
-    <p class="mt-4 text-sm text-mahjong-muted">
-      {{ t('loginView.howItWorks') }}
-    </p>
+        <p v-if="errorKey !== null" role="alert" class="text-sm text-mahjong-negative">
+          {{ t(errorKey) }}
+        </p>
+
+        <div class="flex flex-col gap-2">
+          <BaseButton
+            type="submit"
+            variant="primary"
+            size="lg"
+            :disabled="session.pending"
+            class="w-full"
+          >
+            {{ session.pending ? t('loginView.submitting') : t('loginView.submit') }}
+          </BaseButton>
+
+          <RouterLink
+            to="/partidas"
+            class="text-center text-sm text-mahjong-accent hover:underline"
+          >
+            {{ t('loginView.backToGames') }}
+          </RouterLink>
+        </div>
+      </form>
+
+      <p class="mt-4 text-center text-sm text-mahjong-muted">
+        {{ t('loginView.howItWorks') }}
+      </p>
+    </BaseCard>
   </section>
 </template>
