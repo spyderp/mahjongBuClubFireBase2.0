@@ -23,11 +23,6 @@
         { "fieldPath": "dateFrom", "order": "ASCENDING" },
         { "fieldPath": "dateTo", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "stats",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [{ "fieldPath": "seasonId", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []
